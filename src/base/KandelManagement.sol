@@ -325,6 +325,10 @@ contract KandelManagement is OracleRange {
     KANDEL.withdrawFromMangrove(freeWei, recipient);
   }
 
+  /*//////////////////////////////////////////////////////////////
+                       VIEW FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
   /**
    * @notice Returns the token balances held in this management contract (vault)
    * @return baseBalance The amount of base tokens in the management contract
@@ -361,6 +365,19 @@ contract KandelManagement is OracleRange {
     
     baseBalance = vaultBase + kandelBase;
     quoteBalance = vaultQuote + kandelQuote;
+  }
+
+  /**
+   * @notice Returns the market configuration for this Kandel management contract
+   * @return base The base token address
+   * @return quote The quote token address
+   * @return tickSpacing The tick spacing for the market
+   * @dev This information defines the trading pair and market parameters
+   */
+  function market() external view returns (address base, address quote, uint256 tickSpacing) {
+    base = BASE;
+    quote = QUOTE;
+    tickSpacing = TICK_SPACING;
   }
 
   /*//////////////////////////////////////////////////////////////

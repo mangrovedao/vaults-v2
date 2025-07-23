@@ -790,4 +790,13 @@ contract KandelManagementTest is MangroveTest {
     
     vm.stopPrank();
   }
+
+  function test_market() public view {
+    // Test that market() returns the correct configuration
+    (address base, address quote, uint256 tickSpacing) = management.market();
+    
+    assertEq(base, address(WETH), "Base token should be WETH");
+    assertEq(quote, address(USDC), "Quote token should be USDC");
+    assertEq(tickSpacing, 1, "Tick spacing should be 1");
+  }
 }
