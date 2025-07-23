@@ -8,6 +8,7 @@ import {Mangrove} from "@mgv/src/core/Mangrove.sol";
 import {ERC20} from "lib/solady/src/tokens/ERC20.sol";
 import {OLKey} from "@mgv/src/core/MgvLib.sol";
 import {MgvReader, Market} from "@mgv/src/periphery/MgvReader.sol";
+import {KandelSeeder} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/KandelSeeder.sol";
 
 contract MockERC20 is ERC20 {
   string private _name;
@@ -46,6 +47,7 @@ contract MangroveTest is Test {
   address public governance;
   ERC20 public WETH;
   ERC20 public USDC;
+  KandelSeeder public seeder;
 
   function setUp() public virtual {
     governance = makeAddr("governance");
@@ -60,5 +62,6 @@ contract MangroveTest is Test {
     mangrove.activate(OLKey(address(USDC), address(WETH), 1), 0, 8589934592, 250_000);
     vm.stopPrank();
     reader.updateMarket(Market(address(WETH), address(USDC), 1));
+    seeder = new KandelSeeder(mangrove, 128_000);
   }
 }
