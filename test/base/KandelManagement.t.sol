@@ -371,5 +371,423 @@ contract KandelManagementTest is MangroveTest {
     assertTrue(address(management.KANDEL()) != address(0));
   }
 
+  /*//////////////////////////////////////////////////////////////
+                      WITHDRAWAL FUNCTION TESTS
+  //////////////////////////////////////////////////////////////*/
 
+  function test_retractOffers_onlyRetracts() public {
+    // First populate with funds
+    uint256 baseAmount = 5 ether;
+    uint256 quoteAmount = 10000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.1 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params
+    );
+    
+    // Verify funds are in Kandel
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount);
+    (bool inKandelBefore,,,) = management.state();
+    assertTrue(inKandelBefore);
+    
+    // Retract offers without withdrawing funds or provisions
+    management.retractOffers(0, 5, false, false, payable(address(0)));
+    
+    // Funds should still be in Kandel, inKandel should still be true
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount);
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    
+    (bool inKandelAfter,,,) = management.state();
+    assertTrue(inKandelAfter, "inKandel should remain true");
+    
+    vm.stopPrank();
+  }
+
+  function test_retractOffers_withWithdrawFunds() public {
+    // First populate with funds
+    uint256 baseAmount = 5 ether;
+    uint256 quoteAmount = 10000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.1 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params
+    );
+    
+    // Retract offers and withdraw funds
+    management.retractOffers(0, 11, true, false, payable(address(0)));
+    
+    // Funds should be back in management contract, Kandel should be empty
+    assertEq(WETH.balanceOf(address(management)), baseAmount);
+    assertEq(USDC.balanceOf(address(management)), quoteAmount);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), 0);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    // inKandel should be set to false
+    (bool inKandel,,,) = management.state();
+    assertFalse(inKandel, "inKandel should be false after withdrawing funds");
+    
+    vm.stopPrank();
+  }
+
+  function test_retractOffers_withWithdrawProvisions() public {
+    // First populate with funds
+    CoreKandel.Params memory params;
+    params.pricePoints = 5;
+    params.stepSize = 1;
+    
+    uint256 managerEthBefore = manager.balance;
+    vm.deal(address(manager), 0.1 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 5, Tick.wrap(0), 1, 2, 0, 0, params
+    );
+    
+    // Retract offers and withdraw provisions to manager
+    management.retractOffers(0, 5, false, true, payable(manager));
+    
+    // Manager should have received ETH provisions back
+    assertGt(manager.balance, managerEthBefore, "Manager should have received ETH provisions");
+    
+    vm.stopPrank();
+  }
+
+  function test_retractOffers_withBothWithdrawals() public {
+    // First populate with funds
+    uint256 baseAmount = 3 ether;
+    uint256 quoteAmount = 5000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 7;
+    params.stepSize = 1;
+    
+    uint256 managerEthBefore = manager.balance;
+    vm.deal(address(manager), 0.05 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.05 ether}(
+      0, 7, Tick.wrap(0), 1, 3, 100e6, 1 ether, params
+    );
+    
+    // Retract offers with both fund and provision withdrawal
+    management.retractOffers(0, 7, true, true, payable(manager));
+    
+    // Check funds returned to management contract
+    assertEq(WETH.balanceOf(address(management)), baseAmount);
+    assertEq(USDC.balanceOf(address(management)), quoteAmount);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), 0);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    // Check ETH provisions returned to manager
+    assertGt(manager.balance, managerEthBefore);
+    
+    // Check state
+    (bool inKandel,,,) = management.state();
+    assertFalse(inKandel);
+    
+    vm.stopPrank();
+  }
+
+  function test_retractOffers_onlyManager() public {
+    vm.prank(owner);
+    vm.expectRevert(KandelManagement.NotManager.selector);
+    management.retractOffers(0, 5, false, false, payable(address(0)));
+  }
+
+  function test_withdrawFunds() public {
+    // First populate with funds
+    uint256 baseAmount = 8 ether;
+    uint256 quoteAmount = 15000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 9;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.08 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.08 ether}(
+      0, 9, Tick.wrap(0), 1, 4, 200e6, 2 ether, params
+    );
+    
+    // Verify initial state
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount);
+    (bool inKandelBefore,,,) = management.state();
+    assertTrue(inKandelBefore);
+    
+    // Withdraw funds
+    management.withdrawFunds();
+    
+    // Verify funds transferred back to management contract
+    assertEq(WETH.balanceOf(address(management)), baseAmount);
+    assertEq(USDC.balanceOf(address(management)), quoteAmount);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), 0);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    // Verify state change
+    (bool inKandelAfter,,,) = management.state();
+    assertFalse(inKandelAfter, "inKandel should be false after withdrawal");
+    
+    vm.stopPrank();
+  }
+
+  function test_withdrawFunds_onlyManager() public {
+    vm.prank(owner);
+    vm.expectRevert(KandelManagement.NotManager.selector);
+    management.withdrawFunds();
+  }
+
+  function test_withdrawFromMangrove() public {
+    // First populate to deposit ETH provisions
+    CoreKandel.Params memory params;
+    params.pricePoints = 5;
+    params.stepSize = 1;
+    
+    uint256 ethAmount = 0.05 ether;
+    uint256 managerEthBefore = manager.balance;
+    vm.deal(address(manager), ethAmount);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: ethAmount}(
+      0, 5, Tick.wrap(0), 1, 2, 0, 0, params
+    );
+    
+    // Withdraw specific amount from Mangrove
+    uint256 withdrawAmount = 0.01 ether;
+    management.withdrawFromMangrove(withdrawAmount, payable(manager));
+    
+    // Manager should have received the withdrawn amount
+    assertGe(manager.balance, managerEthBefore + withdrawAmount - 0.001 ether, "Manager should receive withdrawn ETH");
+    
+    vm.stopPrank();
+  }
+
+  function test_withdrawFromMangrove_onlyManager() public {
+    vm.prank(owner);
+    vm.expectRevert(KandelManagement.NotManager.selector);
+    management.withdrawFromMangrove(0.01 ether, payable(manager));
+  }
+
+  function test_retractOffers_customRecipient() public {
+    // Create a custom recipient address
+    address payable customRecipient = payable(makeAddr("customRecipient"));
+    
+    // First populate with funds
+    CoreKandel.Params memory params;
+    params.pricePoints = 5;
+    params.stepSize = 1;
+    
+    uint256 customRecipientEthBefore = customRecipient.balance;
+    vm.deal(address(manager), 0.05 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.05 ether}(
+      0, 5, Tick.wrap(0), 1, 2, 0, 0, params
+    );
+    
+    // Retract offers and withdraw provisions to custom recipient
+    management.retractOffers(0, 5, false, true, customRecipient);
+    
+    // Custom recipient should have received ETH provisions
+    assertGt(customRecipient.balance, customRecipientEthBefore, "Custom recipient should have received ETH provisions");
+    
+    vm.stopPrank();
+  }
+
+  function test_withdrawFromMangrove_customRecipient() public {
+    // Create a custom recipient address
+    address payable customRecipient = payable(makeAddr("customRecipient"));
+    
+    // First populate to deposit ETH provisions
+    CoreKandel.Params memory params;
+    params.pricePoints = 5;
+    params.stepSize = 1;
+    
+    uint256 ethAmount = 0.05 ether;
+    uint256 customRecipientEthBefore = customRecipient.balance;
+    vm.deal(address(manager), ethAmount);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: ethAmount}(
+      0, 5, Tick.wrap(0), 1, 2, 0, 0, params
+    );
+    
+    // Withdraw specific amount from Mangrove to custom recipient
+    uint256 withdrawAmount = 0.01 ether;
+    management.withdrawFromMangrove(withdrawAmount, customRecipient);
+    
+    // Custom recipient should have received the withdrawn amount
+    assertGe(customRecipient.balance, customRecipientEthBefore + withdrawAmount - 0.001 ether, "Custom recipient should receive withdrawn ETH");
+    
+    vm.stopPrank();
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                       BALANCE QUERY TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_vaultBalances() public {
+    // Initially should be zero
+    (uint256 baseBalance, uint256 quoteBalance) = management.vaultBalances();
+    assertEq(baseBalance, 0, "Initial base balance should be zero");
+    assertEq(quoteBalance, 0, "Initial quote balance should be zero");
+    
+    // Mint tokens to management contract
+    uint256 baseAmount = 5 ether;
+    uint256 quoteAmount = 10000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    // Check balances
+    (baseBalance, quoteBalance) = management.vaultBalances();
+    assertEq(baseBalance, baseAmount, "Base balance should match minted amount");
+    assertEq(quoteBalance, quoteAmount, "Quote balance should match minted amount");
+  }
+
+  function test_kandelBalances() public {
+    // Initially should be zero
+    (uint256 baseBalance, uint256 quoteBalance) = management.kandelBalances();
+    assertEq(baseBalance, 0, "Initial Kandel base balance should be zero");
+    assertEq(quoteBalance, 0, "Initial Kandel quote balance should be zero");
+    
+    // Mint and deposit tokens to Kandel
+    uint256 baseAmount = 8 ether;
+    uint256 quoteAmount = 15000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.1 ether);
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 200e6, 2 ether, params
+    );
+    
+    // Check Kandel balances
+    (baseBalance, quoteBalance) = management.kandelBalances();
+    assertEq(baseBalance, baseAmount, "Kandel base balance should match deposited amount");
+    assertEq(quoteBalance, quoteAmount, "Kandel quote balance should match deposited amount");
+  }
+
+  function test_totalBalances() public {
+    // Test with funds split between vault and Kandel
+    uint256 vaultBase = 3 ether;
+    uint256 vaultQuote = 5000e6;
+    uint256 kandelBase = 7 ether;
+    uint256 kandelQuote = 12000e6;
+    
+    // First deposit to Kandel
+    MockERC20(address(WETH)).mint(address(management), kandelBase);
+    MockERC20(address(USDC)).mint(address(management), kandelQuote);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 9;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.08 ether);
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.08 ether}(
+      0, 9, Tick.wrap(0), 1, 4, 300e6, 1.5 ether, params
+    );
+    
+    // Then mint additional tokens to vault
+    MockERC20(address(WETH)).mint(address(management), vaultBase);
+    MockERC20(address(USDC)).mint(address(management), vaultQuote);
+    
+    // Check total balances
+    (uint256 totalBase, uint256 totalQuote) = management.totalBalances();
+    assertEq(totalBase, vaultBase + kandelBase, "Total base should be sum of vault and Kandel");
+    assertEq(totalQuote, vaultQuote + kandelQuote, "Total quote should be sum of vault and Kandel");
+    
+    // Verify individual components
+    (uint256 vaultBaseActual, uint256 vaultQuoteActual) = management.vaultBalances();
+    (uint256 kandelBaseActual, uint256 kandelQuoteActual) = management.kandelBalances();
+    
+    assertEq(vaultBaseActual, vaultBase, "Vault base should match expected");
+    assertEq(vaultQuoteActual, vaultQuote, "Vault quote should match expected");
+    assertEq(kandelBaseActual, kandelBase, "Kandel base should match expected");
+    assertEq(kandelQuoteActual, kandelQuote, "Kandel quote should match expected");
+  }
+
+  function test_balances_afterWithdrawal() public {
+    // Setup initial state with funds in Kandel
+    uint256 initialBase = 6 ether;
+    uint256 initialQuote = 12000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), initialBase);
+    MockERC20(address(USDC)).mint(address(management), initialQuote);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 7;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.06 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.06 ether}(
+      0, 7, Tick.wrap(0), 1, 3, 400e6, 2 ether, params
+    );
+    
+    // Verify funds are in Kandel
+    (uint256 kandelBaseBefore, uint256 kandelQuoteBefore) = management.kandelBalances();
+    assertEq(kandelBaseBefore, initialBase);
+    assertEq(kandelQuoteBefore, initialQuote);
+    (uint256 vaultBaseBefore, uint256 vaultQuoteBefore) = management.vaultBalances();
+    assertEq(vaultBaseBefore, 0);
+    assertEq(vaultQuoteBefore, 0);
+    
+    // Withdraw funds back to vault
+    management.withdrawFunds();
+    
+    // Verify funds moved from Kandel to vault
+    (uint256 kandelBaseAfter, uint256 kandelQuoteAfter) = management.kandelBalances();
+    assertEq(kandelBaseAfter, 0, "Kandel should have no funds after withdrawal");
+    assertEq(kandelQuoteAfter, 0, "Kandel should have no funds after withdrawal");
+    
+    (uint256 vaultBaseAfter, uint256 vaultQuoteAfter) = management.vaultBalances();
+    assertEq(vaultBaseAfter, initialBase, "Vault should have received all base funds");
+    assertEq(vaultQuoteAfter, initialQuote, "Vault should have received all quote funds");
+    
+    // Total should remain the same
+    (uint256 totalBase, uint256 totalQuote) = management.totalBalances();
+    assertEq(totalBase, initialBase, "Total base should remain unchanged");
+    assertEq(totalQuote, initialQuote, "Total quote should remain unchanged");
+    
+    vm.stopPrank();
+  }
 }

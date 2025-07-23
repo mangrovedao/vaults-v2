@@ -8,6 +8,7 @@ import {GeometricKandel} from "@mgv-strats/src/strategies/offer_maker/market_mak
 import {DirectWithBidsAndAsksDistribution} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/DirectWithBidsAndAsksDistribution.sol";
 import {CoreKandel} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/CoreKandel.sol";
+import {OfferType} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/TradesBaseQuotePair.sol";
 import {OLKey} from "@mgv/src/core/MgvLib.sol";
 import {Tick} from "@mgv/lib/core/TickLib.sol";
 import {MAX_TICK} from "@mgv/lib/core/Constants.sol";
@@ -37,7 +38,7 @@ contract KandelManagement is OracleRange {
 
   /// @notice Thrown when caller is not the manager
   error NotManager();
-  
+
   /// @notice Thrown when the proposed distribution doesn't respect oracle constraints
   error InvalidDistribution();
 
@@ -66,10 +67,10 @@ contract KandelManagement is OracleRange {
 
   /// @notice The base token address for the trading pair
   address internal immutable BASE;
-  
+
   /// @notice The quote token address for the trading pair
   address internal immutable QUOTE;
-  
+
   /// @notice The tick spacing for the trading pair
   uint256 internal immutable TICK_SPACING;
 
@@ -147,7 +148,7 @@ contract KandelManagement is OracleRange {
     QUOTE = quote;
     TICK_SPACING = tickSpacing;
     manager = _manager;
-    
+
     // Initialize state with default values
     state = State({
       inKandel: false,
@@ -155,7 +156,7 @@ contract KandelManagement is OracleRange {
       managementFee: _managementFee,
       lastTimestamp: uint40(block.timestamp)
     });
-    
+
     // Deploy Kandel instance with reneging disabled (false parameter)
     KANDEL = seeder.sow(OLKey(base, quote, tickSpacing), false);
   }
@@ -221,23 +222,23 @@ contract KandelManagement is OracleRange {
     );
     // Validate distribution against oracle constraints
     if (!_checkDistribution(distribution)) revert InvalidDistribution();
-    
+
     // Set inKandel to true when populating
     state.inKandel = true;
 
     // Deposit all available funds to the Kandel strategy
-    uint baseBalance = BASE.balanceOf(address(this));
-    uint quoteBalance = QUOTE.balanceOf(address(this));
+    uint256 baseBalance = BASE.balanceOf(address(this));
+    uint256 quoteBalance = QUOTE.balanceOf(address(this));
 
     // Approve Kandel to spend our tokens for offer funding
-    if (baseBalance > 0){
+    if (baseBalance > 0) {
       BASE.safeApprove(address(KANDEL), baseBalance);
     }
 
-    if (quoteBalance > 0){
+    if (quoteBalance > 0) {
       QUOTE.safeApprove(address(KANDEL), quoteBalance);
     }
-    
+
     // Populate Kandel with validated distribution, depositing all available funds
     KANDEL.populate{value: msg.value}(distribution, parameters, baseBalance, quoteBalance);
   }
@@ -264,7 +265,7 @@ contract KandelManagement is OracleRange {
     // Get current Kandel parameters
     CoreKandel.Params memory parameters = _params();
     uint256 baseQuoteTickOffset = KANDEL.baseQuoteTickOffset();
-    
+
     // Create distribution with current parameters
     DirectWithBidsAndAsksDistribution.Distribution memory distribution = KANDEL.createDistribution(
       from,
@@ -281,6 +282,85 @@ contract KandelManagement is OracleRange {
     if (!_checkDistribution(distribution)) revert InvalidDistribution();
     // Update Kandel chunk with validated distribution
     KANDEL.populateChunk(distribution);
+  }
+
+  /**
+   * @notice Retracts Kandel offers from the market with optional fund and provision withdrawal
+   * @param from The starting index of offers to retract
+   * @param to The ending index of offers to retract
+   * @param _withdrawFunds Whether to withdraw token funds from Kandel to this contract
+   * @param withdrawProvisions Whether to withdraw ETH provisions from Mangrove to manager
+   * @param recipient The address to which the withdrawn provisions should be sent to.
+   * @dev Retracting offers removes them from the market but keeps funds in Kandel unless withdrawn
+   * @dev Setting withdrawFunds to true will also set inKandel to false
+   */
+  function retractOffers(uint256 from, uint256 to, bool _withdrawFunds, bool withdrawProvisions, address payable recipient) external onlyManager {
+    KANDEL.retractOffers(from, to);
+    if (_withdrawFunds) {
+      KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
+      state.inKandel = false;
+    }
+    if (withdrawProvisions) {
+      KANDEL.withdrawFromMangrove(type(uint256).max, recipient);
+    }
+  }
+
+  /**
+   * @notice Withdraws all token funds from Kandel strategy back to this contract
+   * @dev Withdraws maximum available base and quote tokens from Kandel to management contract
+   * @dev Sets inKandel state to false as funds are no longer in the strategy
+   */
+  function withdrawFunds() external onlyManager {
+    KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
+    state.inKandel = false;
+  }
+
+  /**
+   * @notice Withdraws ETH provisions from Mangrove to the manager
+   * @param freeWei Amount of ETH (in wei) to withdraw from Mangrove provisions
+   * @param recipient The address to which the withdrawn provisions should be sent to.
+   * @dev This withdraws ETH that was deposited for offer gas provisioning
+   */
+  function withdrawFromMangrove(uint256 freeWei, address payable recipient) external onlyManager {
+    KANDEL.withdrawFromMangrove(freeWei, recipient);
+  }
+
+  /**
+   * @notice Returns the token balances held in this management contract (vault)
+   * @return baseBalance The amount of base tokens in the management contract
+   * @return quoteBalance The amount of quote tokens in the management contract
+   * @dev These are tokens that are not yet deposited into the Kandel strategy
+   */
+  function vaultBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+    baseBalance = BASE.balanceOf(address(this));
+    quoteBalance = QUOTE.balanceOf(address(this));
+  }
+
+  /**
+   * @notice Returns the token balances held in the Kandel strategy
+   * @return baseBalance The amount of base tokens in the Kandel strategy
+   * @return quoteBalance The amount of quote tokens in the Kandel strategy
+   * @dev These are tokens actively used by the Kandel strategy for market making
+   */
+  function kandelBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+    // Ask offers sell base tokens, so reserveBalance for asks returns base token balance
+    baseBalance = KANDEL.reserveBalance(OfferType.Ask);
+    // Bid offers sell quote tokens, so reserveBalance for bids returns quote token balance  
+    quoteBalance = KANDEL.reserveBalance(OfferType.Bid);
+  }
+
+  /**
+   * @notice Returns the total token balances across both vault and Kandel strategy
+   * @return baseBalance The total amount of base tokens (vault + Kandel)
+   * @return quoteBalance The total amount of quote tokens (vault + Kandel)
+   * @dev This represents the total underlying assets controlled by this management contract
+   */
+  function totalBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+    (uint256 vaultBase, uint256 vaultQuote) = this.vaultBalances();
+    (uint256 kandelBase, uint256 kandelQuote) = this.kandelBalances();
+    
+    baseBalance = vaultBase + kandelBase;
+    quoteBalance = vaultQuote + kandelQuote;
   }
 
   /*//////////////////////////////////////////////////////////////
