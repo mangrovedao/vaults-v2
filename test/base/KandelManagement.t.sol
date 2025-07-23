@@ -365,6 +365,111 @@ contract KandelManagementTest is MangroveTest {
     assertTrue(address(management.KANDEL()) != address(0));
   }
 
+  function test_constructor_emitsEvents() public {
+    address newManager = makeAddr("newManager");
+    address newOwner = makeAddr("newOwner");
+    address newGuardian = makeAddr("newGuardian");
+    uint16 newManagementFee = 1000; // 10%
+
+    OracleData memory testOracle;
+    testOracle.isStatic = true;
+    testOracle.staticValue = Tick.wrap(200);
+    testOracle.maxDeviation = 150;
+    testOracle.timelockMinutes = 120;
+
+    // Expect SetManager event for initial manager
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetManager(newManager);
+
+    // Expect SetFeeRecipient event for initial fee recipient (owner)
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetFeeRecipient(newOwner);
+
+    // Create new KandelManagement instance (should emit both events)
+    KandelManagement newManagement = new KandelManagement(
+      seeder, address(WETH), address(USDC), 1, newManager, newManagementFee, testOracle, newOwner, newGuardian
+    );
+
+    // Verify the contract was initialized correctly
+    assertEq(newManagement.manager(), newManager, "Manager should be set correctly");
+    assertEq(newManagement.owner(), newOwner, "Owner should be set correctly");
+    assertEq(newManagement.guardian(), newGuardian, "Guardian should be set correctly");
+
+    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp) = newManagement.state();
+    assertEq(inKandel, false, "inKandel should be false initially");
+    assertEq(feeRecipient, newOwner, "Fee recipient should be owner initially");
+    assertEq(managementFee, newManagementFee, "Management fee should match");
+    assertGt(lastTimestamp, 0, "Last timestamp should be set");
+  }
+
+  function test_constructor_emitsEventsWithSameOwnerManager() public {
+    address ownerManager = makeAddr("ownerManager");
+    address testGuardian = makeAddr("testGuardian");
+    uint16 testFee = 750; // 7.5%
+
+    OracleData memory testOracle;
+    testOracle.isStatic = true;
+    testOracle.staticValue = Tick.wrap(300);
+    testOracle.maxDeviation = 200;
+    testOracle.timelockMinutes = 60;
+
+    // When owner and manager are the same, should still emit both events
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetManager(ownerManager);
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetFeeRecipient(ownerManager);
+
+    // Create new KandelManagement with same address for owner and manager
+    KandelManagement newManagement = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      ownerManager, // manager = owner
+      testFee,
+      testOracle,
+      ownerManager, // owner = manager
+      testGuardian
+    );
+
+    // Verify both roles are set to the same address
+    assertEq(newManagement.manager(), ownerManager, "Manager should be ownerManager");
+    assertEq(newManagement.owner(), ownerManager, "Owner should be ownerManager");
+
+    (, address feeRecipient,,) = newManagement.state();
+    assertEq(feeRecipient, ownerManager, "Fee recipient should be ownerManager");
+  }
+
+  function test_constructor_emitsEventsWithZeroFee() public {
+    address testManager = makeAddr("testManager");
+    address testOwner = makeAddr("testOwner");
+    address testGuardian = makeAddr("testGuardian");
+    uint16 zeroFee = 0; // 0% management fee
+
+    OracleData memory testOracle;
+    testOracle.isStatic = true;
+    testOracle.staticValue = Tick.wrap(500);
+    testOracle.maxDeviation = 100;
+    testOracle.timelockMinutes = 30;
+
+    // Should emit events even with zero fee
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetManager(testManager);
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetFeeRecipient(testOwner);
+
+    // Create new KandelManagement with zero fee
+    KandelManagement newManagement = new KandelManagement(
+      seeder, address(WETH), address(USDC), 1, testManager, zeroFee, testOracle, testOwner, testGuardian
+    );
+
+    // Verify zero fee is set correctly
+    (,, uint16 managementFee,) = newManagement.state();
+    assertEq(managementFee, 0, "Management fee should be zero");
+  }
+
   /*//////////////////////////////////////////////////////////////
                       WITHDRAWAL FUNCTION TESTS
   //////////////////////////////////////////////////////////////*/

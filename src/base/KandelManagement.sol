@@ -144,6 +144,7 @@ contract KandelManagement is OracleRange {
    * @param _owner The owner address (inherited from OracleRange)
    * @param _guardian The guardian address (inherited from OracleRange)
    * @dev Deploys a new GeometricKandel instance through the seeder
+   * @dev Emits SetManager and SetFeeRecipient events for initial state indexing
    */
   constructor(
     AbstractKandelSeeder seeder,
@@ -171,6 +172,10 @@ contract KandelManagement is OracleRange {
 
     // Deploy Kandel instance with reneging disabled (false parameter)
     KANDEL = seeder.sow(OLKey(base, quote, tickSpacing), false);
+
+    // Emit events for initial state for indexing purposes
+    emit SetManager(_manager);
+    emit SetFeeRecipient(_owner);
   }
 
   /*//////////////////////////////////////////////////////////////
