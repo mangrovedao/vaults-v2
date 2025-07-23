@@ -71,10 +71,10 @@ library OracleLib {
     int256 oracleTick = Tick.unwrap(self.tick());
     int256 askTick_ = Tick.unwrap(askTick);
     int256 bidTick_ = Tick.unwrap(bidTick);
-    
+
     // Check if both ask and bid are within acceptable deviation from oracle price
     return oracleTick - askTick_ <= int256(uint256(self.maxDeviation))
-      && oracleTick - bidTick_ <= int256(uint256(self.maxDeviation));
+      && -oracleTick - bidTick_ <= int256(uint256(self.maxDeviation));
   }
 
   /**
@@ -115,7 +115,7 @@ library OracleLib {
     if (address(self.oracle).code.length == 0) {
       return false;
     }
-    
+
     // For dynamic oracles, try to query the oracle and validate the result
     try self.oracle.tick() returns (Tick oracleTick) {
       return oracleTick.inRange();

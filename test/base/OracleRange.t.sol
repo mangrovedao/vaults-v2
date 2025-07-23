@@ -2,11 +2,51 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {OracleRange, OracleData} from "../../src/base/OracleRange.sol";
+import {OracleRange, OracleData, OracleLib} from "../../src/base/OracleRange.sol";
 import {Tick} from "@mgv/lib/core/TickLib.sol";
 import {IOracle} from "../../src/interfaces/IOracle.sol";
 
+/**
+ * @title MockOracle
+ * @notice Mock oracle contract for testing purposes
+ * @dev Allows setting a tick value that can be queried, and can be configured to revert
+ */
+contract MockOracle is IOracle {
+  Tick private _tick;
+  bool private _shouldRevert;
+
+  /**
+   * @notice Sets the tick value that the oracle should return
+   * @param newTick The tick value to set
+   */
+  function setTick(Tick newTick) external {
+    _tick = newTick;
+  }
+
+  /**
+   * @notice Configures whether the oracle should revert when queried
+   * @param shouldRevert True if the oracle should revert, false otherwise
+   */
+  function setShouldRevert(bool shouldRevert) external {
+    _shouldRevert = shouldRevert;
+  }
+
+  /**
+   * @notice Returns the current tick value
+   * @return Tick The current tick value
+   * @dev Reverts if _shouldRevert is true
+   */
+  function tick() external view override returns (Tick) {
+    if (_shouldRevert) {
+      revert("MockOracle: Configured to revert");
+    }
+    return _tick;
+  }
+}
+
 contract OracleRangeTest is Test {
+  using OracleLib for OracleData;
+
   OracleRange public oracleRange;
   address public owner;
   address public guardian;
@@ -232,5 +272,250 @@ contract OracleRangeTest is Test {
     assertTrue(isStatic);
     assertEq(Tick.unwrap(staticValue), 100);
     assertEq(maxDev, 100);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      DYNAMIC ORACLE TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_proposeOracle_validDynamicOracle() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1500)); // Set valid tick value
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 200;
+    dynamicOracle.timelockMinutes = 30;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.ProposedOracle(keccak256(abi.encode(dynamicOracle)), dynamicOracle);
+
+    vm.prank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+
+    // Verify the proposed oracle was set
+    (bool isStatic, IOracle oracle,, uint16 maxDev, uint40 proposedAt, uint8 timelockMinutes) =
+      oracleRange.proposedOracle();
+    assertEq(isStatic, false);
+    assertEq(address(oracle), address(mockOracle));
+    assertEq(maxDev, 200);
+    assertEq(timelockMinutes, 30);
+    assertEq(proposedAt, block.timestamp);
+  }
+
+  function test_proposeOracle_dynamicOracleReturnsInvalidTick() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(type(int24).max)); // Invalid tick (out of range)
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.prank(owner);
+    vm.expectRevert(OracleRange.InvalidOracle.selector);
+    oracleRange.proposeOracle(dynamicOracle);
+  }
+
+  function test_proposeOracle_dynamicOracleReverts() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setShouldRevert(true); // Configure oracle to revert
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.prank(owner);
+    vm.expectRevert(OracleRange.InvalidOracle.selector);
+    oracleRange.proposeOracle(dynamicOracle);
+  }
+
+  function test_acceptOracle_dynamicOracle() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(2000)); // Valid tick value
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 300;
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+
+    // Fast forward past timelock
+    vm.warp(block.timestamp + 61 minutes);
+
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.AcceptedOracle(keccak256(abi.encode(dynamicOracle)));
+
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Verify the oracle was accepted
+    (bool isStatic, IOracle oracle,, uint16 maxDev,,) = oracleRange.oracle();
+    assertEq(isStatic, false);
+    assertEq(address(oracle), address(mockOracle));
+    assertEq(maxDev, 300);
+  }
+
+  function test_dynamicOracle_tickRetrieval() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1800));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.maxDeviation = 300;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Test that we can retrieve the tick from the dynamic oracle
+    // This is done indirectly through the accepts function since tick() is internal
+    OracleData memory currentOracle;
+    (
+      currentOracle.isStatic,
+      currentOracle.oracle,
+      currentOracle.staticValue,
+      currentOracle.maxDeviation,
+      currentOracle.proposedAt,
+      currentOracle.timelockMinutes
+    ) = oracleRange.oracle();
+
+    // Test accepts function with dynamic oracle
+    // Oracle tick is 1800, maxDeviation should allow ticks within range
+    assertTrue(currentOracle.accepts(Tick.wrap(1500), Tick.wrap(-2100))); // Both within range
+    assertTrue(currentOracle.accepts(Tick.wrap(1800), Tick.wrap(-1800))); // Exact match
+  }
+
+  function test_dynamicOracle_acceptsValidation() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1000)); // Oracle returns tick 1000
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 100; // Allow deviation of 100 ticks
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    OracleData memory currentOracle;
+    (
+      currentOracle.isStatic,
+      currentOracle.oracle,
+      currentOracle.staticValue,
+      currentOracle.maxDeviation,
+      currentOracle.proposedAt,
+      currentOracle.timelockMinutes
+    ) = oracleRange.oracle();
+
+    // Test cases for accepts function
+    // Oracle tick = 1000, maxDeviation = 100
+    // Formula: (oracleTick - askTick <= maxDeviation) && (-oracleTick - bidTick <= maxDeviation)
+
+    // Valid cases (within deviation)
+    assertTrue(currentOracle.accepts(Tick.wrap(900), Tick.wrap(-900))); // Ask: 1000-900=100 ≤ 100 ✓, Bid: -1000-(-900)=-100 ≤ 100 ✓
+    assertTrue(currentOracle.accepts(Tick.wrap(950), Tick.wrap(-950))); // Ask: 1000-950=50 ≤ 100 ✓, Bid: -1000-(-950)=-50 ≤ 100 ✓
+    assertTrue(currentOracle.accepts(Tick.wrap(1000), Tick.wrap(-1000))); // Ask: 1000-1000=0 ≤ 100 ✓, Bid: -1000-(-1000)=0 ≤ 100 ✓
+    assertTrue(currentOracle.accepts(Tick.wrap(900), Tick.wrap(-899))); // Ask: 1000-900=100 ≤ 100 ✓, Bid: -1000-(-899)=-101 ≤ 100 ✓ (negative is fine)
+
+    // Invalid cases (outside deviation)
+    assertFalse(currentOracle.accepts(Tick.wrap(899), Tick.wrap(-900))); // Ask: 1000-899=101 > 100 ❌
+    assertFalse(currentOracle.accepts(Tick.wrap(800), Tick.wrap(-800))); // Ask: 1000-800=200 > 100 ❌
+  }
+
+  function test_dynamicOracle_oracleFailsDuringAccepts() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1500));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 3000; // Large enough to accommodate ask/bid calculations
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Now make the oracle revert
+    mockOracle.setShouldRevert(true);
+
+    OracleData memory currentOracle;
+    (
+      currentOracle.isStatic,
+      currentOracle.oracle,
+      currentOracle.staticValue,
+      currentOracle.maxDeviation,
+      currentOracle.proposedAt,
+      currentOracle.timelockMinutes
+    ) = oracleRange.oracle();
+
+    // The accepts function should revert when the oracle fails
+    vm.expectRevert();
+    currentOracle.accepts(Tick.wrap(1400), Tick.wrap(-1600)); // Ask: oracleTick-askTick, Bid: -oracleTick-bidTick
+  }
+
+  function test_dynamicOracle_changingTickValue() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1000));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 50;
+    dynamicOracle.timelockMinutes = 60;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    OracleData memory currentOracle;
+    (
+      currentOracle.isStatic,
+      currentOracle.oracle,
+      currentOracle.staticValue,
+      currentOracle.maxDeviation,
+      currentOracle.proposedAt,
+      currentOracle.timelockMinutes
+    ) = oracleRange.oracle();
+
+    // Test with initial tick value (1000), maxDeviation = 50
+    // Ask: 1000-950=50 ✓, Bid: -1000-(-950)=-50 ✓
+    assertTrue(currentOracle.accepts(Tick.wrap(950), Tick.wrap(-950))); // Within 50 tick deviation
+    // Ask: 1000-949=51 > 50 ❌
+    assertFalse(currentOracle.accepts(Tick.wrap(949), Tick.wrap(-950))); // Ask outside 50 tick deviation
+
+    // Change the oracle's tick value
+    mockOracle.setTick(Tick.wrap(2000));
+
+    // Test with new tick value (2000) - the same OracleData should now use the new value
+    // Ask: 2000-1950=50 ✓, Bid: -2000-(-1950)=-50 ✓
+    assertTrue(currentOracle.accepts(Tick.wrap(1950), Tick.wrap(-1950))); // Within 50 tick deviation of new value
+    // Ask: 2000-950=1050 > 50 ❌
+    assertFalse(currentOracle.accepts(Tick.wrap(950), Tick.wrap(-950))); // Now outside deviation of new value
   }
 }
