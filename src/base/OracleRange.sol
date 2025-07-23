@@ -22,7 +22,7 @@ contract OracleRange is Ownable {
 
   /// @notice Thrown when caller is not the guardian
   error NotGuardian();
-  
+
   /// @notice Thrown when trying to accept an oracle that is still timelocked
   error OracleTimelocked();
 
@@ -39,13 +39,13 @@ contract OracleRange is Ownable {
    * @param oracle The proposed oracle data
    */
   event ProposedOracle(bytes32 indexed key, OracleData oracle);
-  
+
   /**
    * @notice Emitted when a proposed oracle is accepted and becomes active
    * @param key The hash of the accepted oracle data
    */
   event AcceptedOracle(bytes32 indexed key);
-  
+
   /**
    * @notice Emitted when a proposed oracle is rejected by the guardian
    * @param key The hash of the rejected oracle data
@@ -58,7 +58,7 @@ contract OracleRange is Ownable {
 
   /// @notice The currently active oracle configuration
   OracleData public oracle;
-  
+
   /// @notice The proposed oracle configuration awaiting timelock completion
   OracleData public proposedOracle;
 
@@ -125,7 +125,7 @@ contract OracleRange is Ownable {
   function proposeOracle(OracleData memory _oracle) external onlyOwner {
     // Validate that the oracle can provide valid tick values
     if (!_oracle.isValid()) revert InvalidOracle();
-    
+
     // Set proposal timestamp to current block time
     _oracle.proposedAt = uint40(block.timestamp);
     proposedOracle = _oracle;

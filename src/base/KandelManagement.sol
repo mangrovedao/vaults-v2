@@ -309,7 +309,13 @@ contract KandelManagement is OracleRange {
    * @dev Retracting offers removes them from the market but keeps funds in Kandel unless withdrawn
    * @dev Setting withdrawFunds to true will also set inKandel to false
    */
-  function retractOffers(uint256 from, uint256 to, bool _withdrawFunds, bool withdrawProvisions, address payable recipient) external onlyManager {
+  function retractOffers(
+    uint256 from,
+    uint256 to,
+    bool _withdrawFunds,
+    bool withdrawProvisions,
+    address payable recipient
+  ) external onlyManager {
     KANDEL.retractOffers(from, to);
     if (_withdrawFunds) {
       KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
@@ -370,7 +376,7 @@ contract KandelManagement is OracleRange {
   function kandelBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
     // Ask offers sell base tokens, so reserveBalance for asks returns base token balance
     baseBalance = KANDEL.reserveBalance(OfferType.Ask);
-    // Bid offers sell quote tokens, so reserveBalance for bids returns quote token balance  
+    // Bid offers sell quote tokens, so reserveBalance for bids returns quote token balance
     quoteBalance = KANDEL.reserveBalance(OfferType.Bid);
   }
 
@@ -383,7 +389,7 @@ contract KandelManagement is OracleRange {
   function totalBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
     (uint256 vaultBase, uint256 vaultQuote) = this.vaultBalances();
     (uint256 kandelBase, uint256 kandelQuote) = this.kandelBalances();
-    
+
     baseBalance = vaultBase + kandelBase;
     quoteBalance = vaultQuote + kandelQuote;
   }
