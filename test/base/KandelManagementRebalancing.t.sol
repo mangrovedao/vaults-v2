@@ -1,0 +1,593 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {KandelManagementRebalancing} from "../../src/base/KandelManagementRebalancing.sol";
+import {
+  KandelManagement,
+  OracleRange,
+  AbstractKandelSeeder,
+  Tick,
+  CoreKandel,
+  OracleData
+} from "../../src/base/KandelManagement.sol";
+import {MangroveTest, MockERC20} from "./MangroveTest.t.sol";
+
+contract KandelManagementRebalancingTest is MangroveTest {
+  KandelManagementRebalancing public management;
+  address public manager;
+  address public guardian;
+  address public owner;
+  uint16 public constant MANAGEMENT_FEE = 500; // 5%
+
+  function setUp() public virtual override {
+    super.setUp();
+    manager = makeAddr("manager");
+    guardian = makeAddr("guardian");
+    owner = makeAddr("owner");
+
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60; // 1 hour
+
+    management = new KandelManagementRebalancing(
+      seeder, address(WETH), address(USDC), 1, manager, MANAGEMENT_FEE, oracle, owner, guardian
+    );
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                        CONSTRUCTOR TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_constructor_initializesCorrectly() public {
+    assertEq(management.manager(), manager, "Manager should be set correctly");
+    assertEq(management.guardian(), guardian, "Guardian should be set correctly");
+    assertEq(management.owner(), owner, "Owner should be set correctly");
+
+    // Check KANDEL was deployed
+    assertTrue(address(management.KANDEL()) != address(0), "KANDEL should be deployed");
+
+    // Check initial whitelist state is empty
+    address testAddress = makeAddr("testAddress");
+    assertFalse(management.isWhitelisted(testAddress), "Address should not be whitelisted initially");
+    assertEq(management.whitelistProposedAt(testAddress), 0, "Address should not be proposed initially");
+  }
+
+  function test_constructor_inheritsKandelManagementFunctionality() public view {
+    // Test that inherited functionality works
+    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp) = management.state();
+
+    assertEq(inKandel, false, "inKandel should be false initially");
+    assertEq(feeRecipient, owner, "Fee recipient should be owner initially");
+    assertEq(managementFee, MANAGEMENT_FEE, "Management fee should match");
+    assertGt(lastTimestamp, 0, "Last timestamp should be set");
+
+    // Test market configuration
+    (address base, address quote, uint256 tickSpacing) = management.market();
+    assertEq(base, address(WETH), "Base token should be WETH");
+    assertEq(quote, address(USDC), "Quote token should be USDC");
+    assertEq(tickSpacing, 1, "Tick spacing should be 1");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                     PROPOSE WHITELIST TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_proposeWhitelist() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistProposed(proposedAddress);
+
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Check that proposal was recorded
+    uint256 proposedAt = management.whitelistProposedAt(proposedAddress);
+    assertEq(proposedAt, block.timestamp, "Proposal timestamp should be current block timestamp");
+
+    // Address should not be whitelisted yet
+    assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted yet");
+
+    // Should not be ready for acceptance yet
+    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance yet");
+  }
+
+  function test_proposeWhitelist_onlyOwner() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Test that manager cannot propose
+    vm.prank(manager);
+    vm.expectRevert();
+    management.proposeWhitelist(proposedAddress);
+
+    // Test that guardian cannot propose
+    vm.prank(guardian);
+    vm.expectRevert();
+    management.proposeWhitelist(proposedAddress);
+
+    // Test that random address cannot propose
+    vm.prank(makeAddr("randomUser"));
+    vm.expectRevert();
+    management.proposeWhitelist(proposedAddress);
+
+    // Verify no proposal was made
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "No proposal should be recorded");
+  }
+
+  function test_proposeWhitelist_alreadyProposed() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // First proposal should succeed
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Second proposal should fail
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.AlreadyProposed.selector);
+    management.proposeWhitelist(proposedAddress);
+  }
+
+  function test_proposeWhitelist_multipleAddresses() public {
+    address address1 = makeAddr("address1");
+    address address2 = makeAddr("address2");
+    address address3 = makeAddr("address3");
+
+    vm.startPrank(owner);
+
+    // Propose multiple addresses
+    management.proposeWhitelist(address1);
+    management.proposeWhitelist(address2);
+    management.proposeWhitelist(address3);
+
+    vm.stopPrank();
+
+    // All should be proposed but not whitelisted
+    assertGt(management.whitelistProposedAt(address1), 0, "Address1 should be proposed");
+    assertGt(management.whitelistProposedAt(address2), 0, "Address2 should be proposed");
+    assertGt(management.whitelistProposedAt(address3), 0, "Address3 should be proposed");
+
+    assertFalse(management.isWhitelisted(address1), "Address1 should not be whitelisted yet");
+    assertFalse(management.isWhitelisted(address2), "Address2 should not be whitelisted yet");
+    assertFalse(management.isWhitelisted(address3), "Address3 should not be whitelisted yet");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                     ACCEPT WHITELIST TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_acceptWhitelist() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // First propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Fast forward past timelock
+    vm.warp(block.timestamp + 61 minutes);
+
+    // Should be ready for acceptance now
+    assertTrue(management.canAcceptWhitelist(proposedAddress), "Should be ready for acceptance");
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistAccepted(proposedAddress);
+
+    vm.prank(owner);
+    management.acceptWhitelist(proposedAddress);
+
+    // Check final state
+    assertTrue(management.isWhitelisted(proposedAddress), "Address should be whitelisted");
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared");
+    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should no longer be ready for acceptance");
+  }
+
+  function test_acceptWhitelist_onlyOwner() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose and wait for timelock
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+    vm.warp(block.timestamp + 61 minutes);
+
+    // Test that manager cannot accept
+    vm.prank(manager);
+    vm.expectRevert();
+    management.acceptWhitelist(proposedAddress);
+
+    // Test that guardian cannot accept
+    vm.prank(guardian);
+    vm.expectRevert();
+    management.acceptWhitelist(proposedAddress);
+
+    // Test that random address cannot accept
+    vm.prank(makeAddr("randomUser"));
+    vm.expectRevert();
+    management.acceptWhitelist(proposedAddress);
+
+    // Verify address is still not whitelisted
+    assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted");
+  }
+
+  function test_acceptWhitelist_notProposed() public {
+    address notProposedAddress = makeAddr("notProposedAddress");
+
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.NotProposed.selector);
+    management.acceptWhitelist(notProposedAddress);
+  }
+
+  function test_acceptWhitelist_timelockNotExpired() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Try to accept immediately (should fail)
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.TimelockNotExpired.selector);
+    management.acceptWhitelist(proposedAddress);
+
+    // Try to accept just before timelock expires (should fail)
+    vm.warp(block.timestamp + 59 minutes);
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.TimelockNotExpired.selector);
+    management.acceptWhitelist(proposedAddress);
+
+    // Verify address is not whitelisted
+    assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted");
+  }
+
+  function test_acceptWhitelist_exactTimelockExpiry() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Fast forward to exact timelock expiry
+    vm.warp(block.timestamp + 60 minutes);
+
+    // Should succeed at exact expiry
+    vm.prank(owner);
+    management.acceptWhitelist(proposedAddress);
+
+    assertTrue(management.isWhitelisted(proposedAddress), "Address should be whitelisted");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                     REJECT WHITELIST TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_rejectWhitelist() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Verify initial state
+    assertGt(management.whitelistProposedAt(proposedAddress), 0, "Address should be proposed");
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistRejected(proposedAddress);
+
+    // Guardian rejects the proposal
+    vm.prank(guardian);
+    management.rejectWhitelist(proposedAddress);
+
+    // Check final state
+    assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted");
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared");
+    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance");
+  }
+
+  function test_rejectWhitelist_onlyGuardian() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Test that owner cannot reject
+    vm.prank(owner);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    management.rejectWhitelist(proposedAddress);
+
+    // Test that manager cannot reject
+    vm.prank(manager);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    management.rejectWhitelist(proposedAddress);
+
+    // Test that random address cannot reject
+    vm.prank(makeAddr("randomUser"));
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    management.rejectWhitelist(proposedAddress);
+
+    // Verify proposal still exists
+    assertGt(management.whitelistProposedAt(proposedAddress), 0, "Proposal should still exist");
+  }
+
+  function test_rejectWhitelist_notProposed() public {
+    address notProposedAddress = makeAddr("notProposedAddress");
+
+    vm.prank(guardian);
+    vm.expectRevert(KandelManagementRebalancing.NotProposed.selector);
+    management.rejectWhitelist(notProposedAddress);
+  }
+
+  function test_rejectWhitelist_canRejectAnytime() public {
+    address proposedAddress = makeAddr("proposedAddress");
+
+    // Propose the address
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    // Guardian can reject immediately
+    vm.prank(guardian);
+    management.rejectWhitelist(proposedAddress);
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared immediately");
+
+    // Test rejecting during timelock period
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    vm.warp(block.timestamp + 30 minutes); // Halfway through timelock
+
+    vm.prank(guardian);
+    management.rejectWhitelist(proposedAddress);
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared during timelock");
+
+    // Test rejecting after timelock expires
+    vm.prank(owner);
+    management.proposeWhitelist(proposedAddress);
+
+    vm.warp(block.timestamp + 61 minutes); // After timelock
+
+    vm.prank(guardian);
+    management.rejectWhitelist(proposedAddress);
+    assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared after timelock");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                        VIEW FUNCTION TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_whitelistProposedAt() public {
+    address testAddress = makeAddr("testAddress");
+
+    // Initially should return 0
+    assertEq(management.whitelistProposedAt(testAddress), 0, "Should return 0 for non-proposed address");
+
+    // After proposing, should return timestamp
+    uint256 proposalTime = block.timestamp;
+    vm.prank(owner);
+    management.proposeWhitelist(testAddress);
+
+    assertEq(management.whitelistProposedAt(testAddress), proposalTime, "Should return proposal timestamp");
+
+    // After accepting, should return 0 again
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(testAddress);
+
+    assertEq(management.whitelistProposedAt(testAddress), 0, "Should return 0 after acceptance");
+  }
+
+  function test_canAcceptWhitelist() public {
+    address testAddress = makeAddr("testAddress");
+
+    // Initially should return false
+    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false for non-proposed address");
+
+    // After proposing, should return false until timelock expires
+    vm.prank(owner);
+    management.proposeWhitelist(testAddress);
+    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false immediately after proposal");
+
+    // Just before timelock expires
+    vm.warp(block.timestamp + 59 minutes);
+    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false just before timelock expires");
+
+    // At exact timelock expiry
+    vm.warp(block.timestamp + 1 minutes); // Now at 60 minutes
+    assertTrue(management.canAcceptWhitelist(testAddress), "Should return true at exact timelock expiry");
+
+    // After timelock expires
+    vm.warp(block.timestamp + 1 minutes); // Now at 61 minutes
+    assertTrue(management.canAcceptWhitelist(testAddress), "Should return true after timelock expires");
+
+    // After acceptance, should return false
+    vm.prank(owner);
+    management.acceptWhitelist(testAddress);
+    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false after acceptance");
+  }
+
+  function test_isWhitelisted() public {
+    address testAddress = makeAddr("testAddress");
+
+    // Initially should be false
+    assertFalse(management.isWhitelisted(testAddress), "Should be false initially");
+
+    // Should remain false after proposing
+    vm.prank(owner);
+    management.proposeWhitelist(testAddress);
+    assertFalse(management.isWhitelisted(testAddress), "Should remain false after proposing");
+
+    // Should remain false during timelock
+    vm.warp(block.timestamp + 30 minutes);
+    assertFalse(management.isWhitelisted(testAddress), "Should remain false during timelock");
+
+    // Should become true after acceptance
+    vm.warp(block.timestamp + 31 minutes); // Total 61 minutes
+    vm.prank(owner);
+    management.acceptWhitelist(testAddress);
+    assertTrue(management.isWhitelisted(testAddress), "Should be true after acceptance");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         WORKFLOW TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_completeWhitelistWorkflow() public {
+    address rebalancer = makeAddr("rebalancer");
+
+    // Step 1: Owner proposes address
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistProposed(rebalancer);
+
+    vm.prank(owner);
+    management.proposeWhitelist(rebalancer);
+
+    // Verify intermediate state
+    assertGt(management.whitelistProposedAt(rebalancer), 0, "Should be proposed");
+    assertFalse(management.isWhitelisted(rebalancer), "Should not be whitelisted yet");
+    assertFalse(management.canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
+
+    // Step 2: Wait for timelock
+    vm.warp(block.timestamp + 61 minutes);
+    assertTrue(management.canAcceptWhitelist(rebalancer), "Should be ready for acceptance after timelock");
+
+    // Step 3: Owner accepts proposal
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistAccepted(rebalancer);
+
+    vm.prank(owner);
+    management.acceptWhitelist(rebalancer);
+
+    // Verify final state
+    assertTrue(management.isWhitelisted(rebalancer), "Should be whitelisted");
+    assertEq(management.whitelistProposedAt(rebalancer), 0, "Proposal should be cleared");
+    assertFalse(management.canAcceptWhitelist(rebalancer), "Should no longer be ready for acceptance");
+  }
+
+  function test_guardianRejectionWorkflow() public {
+    address rebalancer = makeAddr("rebalancer");
+
+    // Step 1: Owner proposes address
+    vm.prank(owner);
+    management.proposeWhitelist(rebalancer);
+
+    // Step 2: Guardian rejects before timelock expires
+    vm.warp(block.timestamp + 30 minutes);
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistRejected(rebalancer);
+
+    vm.prank(guardian);
+    management.rejectWhitelist(rebalancer);
+
+    // Verify final state
+    assertFalse(management.isWhitelisted(rebalancer), "Should not be whitelisted");
+    assertEq(management.whitelistProposedAt(rebalancer), 0, "Proposal should be cleared");
+    assertFalse(management.canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
+
+    // Step 3: Owner can propose again after rejection
+    vm.prank(owner);
+    management.proposeWhitelist(rebalancer);
+    assertGt(management.whitelistProposedAt(rebalancer), 0, "Should be proposed again");
+  }
+
+  function test_multipleAddressWorkflow() public {
+    address rebalancer1 = makeAddr("rebalancer1");
+    address rebalancer2 = makeAddr("rebalancer2");
+    address rebalancer3 = makeAddr("rebalancer3");
+
+    vm.startPrank(owner);
+
+    // Propose all three addresses
+    management.proposeWhitelist(rebalancer1);
+    management.proposeWhitelist(rebalancer2);
+    management.proposeWhitelist(rebalancer3);
+
+    vm.stopPrank();
+
+    // Wait for timelock
+    vm.warp(block.timestamp + 61 minutes);
+
+    // Accept first, reject second, leave third pending
+    vm.prank(owner);
+    management.acceptWhitelist(rebalancer1);
+
+    vm.prank(guardian);
+    management.rejectWhitelist(rebalancer2);
+
+    // Verify states
+    assertTrue(management.isWhitelisted(rebalancer1), "Rebalancer1 should be whitelisted");
+    assertFalse(management.isWhitelisted(rebalancer2), "Rebalancer2 should not be whitelisted");
+    assertFalse(management.isWhitelisted(rebalancer3), "Rebalancer3 should not be whitelisted yet");
+
+    assertEq(management.whitelistProposedAt(rebalancer1), 0, "Rebalancer1 proposal should be cleared");
+    assertEq(management.whitelistProposedAt(rebalancer2), 0, "Rebalancer2 proposal should be cleared");
+    assertGt(management.whitelistProposedAt(rebalancer3), 0, "Rebalancer3 proposal should still exist");
+
+    assertTrue(management.canAcceptWhitelist(rebalancer3), "Rebalancer3 should be ready for acceptance");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         EDGE CASE TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_zeroAddress() public {
+    // Should be able to propose zero address (edge case)
+    vm.prank(owner);
+    management.proposeWhitelist(address(0));
+
+    assertGt(management.whitelistProposedAt(address(0)), 0, "Zero address should be proposed");
+
+    // Should be able to accept zero address
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(0));
+
+    assertTrue(management.isWhitelisted(address(0)), "Zero address should be whitelisted");
+  }
+
+  function test_contractAddresses() public {
+    // Test whitelisting contract addresses
+    address contractAddress = address(management); // Use management contract itself
+
+    vm.prank(owner);
+    management.proposeWhitelist(contractAddress);
+
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(contractAddress);
+
+    assertTrue(management.isWhitelisted(contractAddress), "Contract address should be whitelisted");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         INHERITANCE TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_inheritedKandelManagementFunctions() public {
+    // Test that we can still use inherited KandelManagement functions
+    address newManager = makeAddr("newManager");
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagement.SetManager(newManager);
+
+    vm.prank(owner);
+    management.setManager(newManager);
+
+    assertEq(management.manager(), newManager, "Manager should be updated");
+
+    // Test balance functions work
+    (uint256 baseBalance, uint256 quoteBalance) = management.vaultBalances();
+    assertEq(baseBalance, 0, "Initial vault base balance should be zero");
+    assertEq(quoteBalance, 0, "Initial vault quote balance should be zero");
+
+    // Test populateFromOffset still works (basic test)
+    CoreKandel.Params memory params;
+    params.pricePoints = 5;
+    params.stepSize = 1;
+
+    vm.deal(address(newManager), 0.01 ether);
+    vm.prank(newManager);
+    management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 100e6, 1 ether, params);
+
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel, "Should be in Kandel after populate");
+  }
+}
