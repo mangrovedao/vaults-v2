@@ -152,6 +152,48 @@ contract KandelManagementRebalancingTest is MangroveTest {
     assertFalse(management.isWhitelisted(address3), "Address3 should not be whitelisted yet");
   }
 
+  function test_proposeWhitelist_invalidAddress_kandel() public {
+    // Should not be able to whitelist the Kandel contract itself
+    address kandelAddress = address(management.KANDEL());
+
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(kandelAddress);
+  }
+
+  function test_proposeWhitelist_invalidAddress_baseToken() public {
+    // Should not be able to whitelist the base token
+    (address base,,) = management.market();
+
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(base);
+  }
+
+  function test_proposeWhitelist_invalidAddress_quoteToken() public {
+    // Should not be able to whitelist the quote token
+    (, address quote,) = management.market();
+
+    vm.prank(owner);
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(quote);
+  }
+
+  function test_proposeWhitelist_validAddressStillWorks() public {
+    // Ensure valid addresses can still be proposed after adding validation
+    address validAddress = makeAddr("validRebalancer");
+
+    vm.expectEmit(true, false, false, true);
+    emit KandelManagementRebalancing.WhitelistProposed(validAddress);
+
+    vm.prank(owner);
+    management.proposeWhitelist(validAddress);
+
+    // Should be proposed successfully
+    assertGt(management.whitelistProposedAt(validAddress), 0, "Valid address should be proposed");
+    assertFalse(management.isWhitelisted(validAddress), "Should not be whitelisted yet");
+  }
+
   /*//////////////////////////////////////////////////////////////
                      ACCEPT WHITELIST TESTS
   //////////////////////////////////////////////////////////////*/
@@ -432,7 +474,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
   function test_completeWhitelistWorkflow() public {
     address rebalancer = makeAddr("rebalancer");
 
-    // Step 1: Owner proposes address
+    // Step 1: Owner proposes address (should pass validation)
     vm.expectEmit(true, false, false, true);
     emit KandelManagementRebalancing.WhitelistProposed(rebalancer);
 
@@ -459,6 +501,40 @@ contract KandelManagementRebalancingTest is MangroveTest {
     assertTrue(management.isWhitelisted(rebalancer), "Should be whitelisted");
     assertEq(management.whitelistProposedAt(rebalancer), 0, "Proposal should be cleared");
     assertFalse(management.canAcceptWhitelist(rebalancer), "Should no longer be ready for acceptance");
+  }
+
+  function test_canWhitelistValidation_comprehensive() public {
+    // Test that all invalid addresses are properly rejected
+    (address base, address quote,) = management.market();
+    address kandelAddress = address(management.KANDEL());
+
+    vm.startPrank(owner);
+
+    // Should fail for Kandel contract
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(kandelAddress);
+
+    // Should fail for base token
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(base);
+
+    // Should fail for quote token
+    vm.expectRevert(KandelManagementRebalancing.InvalidWhitelistAddress.selector);
+    management.proposeWhitelist(quote);
+
+    // Should succeed for valid addresses
+    address validAddress1 = makeAddr("validAddress1");
+    address validAddress2 = makeAddr("validAddress2");
+
+    // These should not revert
+    management.proposeWhitelist(validAddress1);
+    management.proposeWhitelist(validAddress2);
+
+    vm.stopPrank();
+
+    // Verify valid addresses were proposed
+    assertGt(management.whitelistProposedAt(validAddress1), 0, "Valid address 1 should be proposed");
+    assertGt(management.whitelistProposedAt(validAddress2), 0, "Valid address 2 should be proposed");
   }
 
   function test_guardianRejectionWorkflow() public {
@@ -544,17 +620,30 @@ contract KandelManagementRebalancingTest is MangroveTest {
   }
 
   function test_contractAddresses() public {
-    // Test whitelisting contract addresses
-    address contractAddress = address(management); // Use management contract itself
+    // Test whitelisting arbitrary contract addresses (not the restricted ones)
+    // Create a mock contract address that's not one of the restricted addresses
+    address arbitraryContract = address(0x1234567890123456789012345678901234567890);
 
     vm.prank(owner);
-    management.proposeWhitelist(contractAddress);
+    management.proposeWhitelist(arbitraryContract);
 
     vm.warp(block.timestamp + 61 minutes);
     vm.prank(owner);
-    management.acceptWhitelist(contractAddress);
+    management.acceptWhitelist(arbitraryContract);
 
-    assertTrue(management.isWhitelisted(contractAddress), "Contract address should be whitelisted");
+    assertTrue(management.isWhitelisted(arbitraryContract), "Arbitrary contract address should be whitelisted");
+  }
+
+  function test_proposeWhitelist_invalidAddress_managementContract() public {
+    // Test that the management contract itself can be whitelisted (it's not in the restricted list)
+    // This ensures our validation doesn't accidentally block the management contract
+    address managementAddress = address(management);
+
+    // This should succeed since management contract is not in the restricted list
+    vm.prank(owner);
+    management.proposeWhitelist(managementAddress);
+
+    assertGt(management.whitelistProposedAt(managementAddress), 0, "Management contract should be proposable");
   }
 
   /*//////////////////////////////////////////////////////////////

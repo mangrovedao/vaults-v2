@@ -30,6 +30,9 @@ contract KandelManagementRebalancing is KandelManagement {
   /// @notice Thrown when trying to accept a whitelist proposal before the timelock has expired
   error TimelockNotExpired();
 
+  /// @notice Thrown when trying to whitelist an invalid address (Kandel contract, base token, or quote token)
+  error InvalidWhitelistAddress();
+
   /*//////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
@@ -104,6 +107,7 @@ contract KandelManagementRebalancing is KandelManagement {
    * @dev Reverts with AlreadyProposed if the address is already proposed
    */
   function proposeWhitelist(address _address) external onlyOwner {
+    if (!_canWhitelist(_address)) revert InvalidWhitelistAddress();
     uint40 existing = _whitelistPropositions[_address];
     if (existing > 0) revert AlreadyProposed();
     _whitelistPropositions[_address] = uint40(block.timestamp);
@@ -145,6 +149,30 @@ contract KandelManagementRebalancing is KandelManagement {
     if (existing == 0) revert NotProposed();
     delete _whitelistPropositions[_address];
     emit WhitelistRejected(_address);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      INTERNAL FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Validates whether an address can be whitelisted
+   * @param _address The address to validate
+   * @return canWhitelist True if the address can be whitelisted, false otherwise
+   * @dev Virtual function that can be overridden in derived contracts for custom validation
+   * @dev Current implementation prevents whitelisting the Kandel contract, base token, and quote token
+   */
+  function _canWhitelist(address _address) internal view virtual returns (bool canWhitelist) {
+    // Cannot whitelist the Kandel contract itself
+    if (_address == address(KANDEL)) return false;
+
+    // Cannot whitelist the base token
+    if (_address == BASE) return false;
+
+    // Cannot whitelist the quote token
+    if (_address == QUOTE) return false;
+
+    return true;
   }
 
   /*//////////////////////////////////////////////////////////////
