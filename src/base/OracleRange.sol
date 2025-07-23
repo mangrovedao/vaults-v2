@@ -52,6 +52,13 @@ contract OracleRange is Ownable {
    */
   event RejectedOracle(bytes32 indexed key);
 
+  /**
+   * @notice Emitted when a new guardian is designated
+   * @param oldGuardian The address of the previous guardian
+   * @param newGuardian The address of the new guardian
+   */
+  event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
+
   /*//////////////////////////////////////////////////////////////
                         STATE VARIABLES
   //////////////////////////////////////////////////////////////*/
@@ -154,5 +161,17 @@ contract OracleRange is Ownable {
     OracleData memory _oracle = proposedOracle;
     delete proposedOracle; // Clear the proposed oracle
     emit RejectedOracle(keccak256(abi.encode(_oracle)));
+  }
+
+  /**
+   * @notice Sets a new guardian address
+   * @param newGuardian The address of the new guardian
+   * @dev Only the current guardian can designate a new guardian
+   * @dev The new guardian will have the ability to reject oracle proposals
+   */
+  function setGuardian(address newGuardian) external onlyGuardian {
+    address oldGuardian = guardian;
+    guardian = newGuardian;
+    emit GuardianChanged(oldGuardian, newGuardian);
   }
 }

@@ -518,4 +518,153 @@ contract OracleRangeTest is Test {
     // Ask: 2000-950=1050 > 50 ❌
     assertFalse(currentOracle.accepts(Tick.wrap(950), Tick.wrap(-950))); // Now outside deviation of new value
   }
+
+  /*//////////////////////////////////////////////////////////////
+                      GUARDIAN MANAGEMENT TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_setGuardian() public {
+    address newGuardian = makeAddr("newGuardian");
+
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(guardian, newGuardian);
+
+    vm.prank(guardian);
+    oracleRange.setGuardian(newGuardian);
+
+    assertEq(oracleRange.guardian(), newGuardian, "Guardian should be updated to new address");
+  }
+
+  function test_setGuardian_onlyGuardian() public {
+    address newGuardian = makeAddr("newGuardian");
+
+    // Test that owner cannot set guardian
+    vm.prank(owner);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.setGuardian(newGuardian);
+
+    // Test that non-owner cannot set guardian
+    vm.prank(nonOwner);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.setGuardian(newGuardian);
+
+    // Guardian should remain unchanged
+    assertEq(oracleRange.guardian(), guardian, "Guardian should remain unchanged after failed attempts");
+  }
+
+  function test_setGuardian_newGuardianCanReject() public {
+    address newGuardian = makeAddr("newGuardian");
+
+    // First, set a new guardian
+    vm.prank(guardian);
+    oracleRange.setGuardian(newGuardian);
+
+    // Propose an oracle as owner
+    OracleData memory newOracle;
+    newOracle.isStatic = true;
+    newOracle.staticValue = Tick.wrap(500);
+    newOracle.timelockMinutes = 60;
+
+    vm.prank(owner);
+    oracleRange.proposeOracle(newOracle);
+
+    // Old guardian should no longer be able to reject
+    vm.prank(guardian);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.rejectOracle();
+
+    // New guardian should be able to reject
+    vm.prank(newGuardian);
+    oracleRange.rejectOracle(); // Should succeed
+
+    // Verify proposed oracle was cleared
+    (bool isStatic,,,,, uint8 timelockMinutes) = oracleRange.proposedOracle();
+    assertEq(isStatic, false, "Proposed oracle should be cleared");
+    assertEq(timelockMinutes, 0, "Proposed oracle timelock should be cleared");
+  }
+
+  function test_setGuardian_sameAddress() public {
+    // Setting guardian to the same address should still work and emit event
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(guardian, guardian);
+
+    vm.prank(guardian);
+    oracleRange.setGuardian(guardian);
+
+    assertEq(oracleRange.guardian(), guardian, "Guardian should remain the same");
+  }
+
+  function test_setGuardian_zeroAddress() public {
+    // Setting guardian to zero address should be allowed (removes guardian functionality)
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(guardian, address(0));
+
+    vm.prank(guardian);
+    oracleRange.setGuardian(address(0));
+
+    assertEq(oracleRange.guardian(), address(0), "Guardian should be set to zero address");
+
+    // After setting to zero address, no one should be able to reject oracles
+    OracleData memory newOracle;
+    newOracle.isStatic = true;
+    newOracle.staticValue = Tick.wrap(500);
+    newOracle.timelockMinutes = 60;
+
+    vm.prank(owner);
+    oracleRange.proposeOracle(newOracle);
+
+    // No one should be able to reject now
+    vm.prank(guardian); // Old guardian
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.rejectOracle();
+
+    vm.prank(owner);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.rejectOracle();
+  }
+
+  function test_setGuardian_chainedTransfer() public {
+    address newGuardian1 = makeAddr("newGuardian1");
+    address newGuardian2 = makeAddr("newGuardian2");
+
+    // First transfer: original guardian -> newGuardian1
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(guardian, newGuardian1);
+
+    vm.prank(guardian);
+    oracleRange.setGuardian(newGuardian1);
+
+    assertEq(oracleRange.guardian(), newGuardian1, "Guardian should be newGuardian1");
+
+    // Second transfer: newGuardian1 -> newGuardian2
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(newGuardian1, newGuardian2);
+
+    vm.prank(newGuardian1);
+    oracleRange.setGuardian(newGuardian2);
+
+    assertEq(oracleRange.guardian(), newGuardian2, "Guardian should be newGuardian2");
+
+    // Verify only the final guardian can reject oracles
+    OracleData memory newOracle;
+    newOracle.isStatic = true;
+    newOracle.staticValue = Tick.wrap(500);
+    newOracle.timelockMinutes = 60;
+
+    vm.prank(owner);
+    oracleRange.proposeOracle(newOracle);
+
+    // Original guardian and first new guardian should not work
+    vm.prank(guardian);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.rejectOracle();
+
+    vm.prank(newGuardian1);
+    vm.expectRevert(OracleRange.NotGuardian.selector);
+    oracleRange.rejectOracle();
+
+    // Only the final guardian should work
+    vm.prank(newGuardian2);
+    oracleRange.rejectOracle(); // Should succeed
+  }
 }
