@@ -24,16 +24,17 @@ library OracleLib {
     return self.oracle.tick();
   }
 
-  function accepts(OracleData memory self, Tick _tick, bool isBid) internal view returns (bool) {
+  function accepts(OracleData memory self, Tick askTick, Tick bidTick) internal view returns (bool) {
     int256 oracleTick = Tick.unwrap(self.tick());
-    int256 tick = Tick.unwrap(_tick);
-    if (isBid) oracleTick = -oracleTick;
-    return oracleTick - tick <= int256(uint256(self.maxDeviation));
+    int256 askTick_ = Tick.unwrap(askTick);
+    int256 bidTick_ = Tick.unwrap(bidTick);
+    return oracleTick - askTick_ <= int256(uint256(self.maxDeviation))
+      && oracleTick - bidTick_ <= int256(uint256(self.maxDeviation));
   }
 
   function timelocked(OracleData memory self, uint40 start) internal view returns (bool) {
-    uint40 now = uint40(block.timestamp);
-    if (now < start) return true;
-    return now - start < uint40(self.timelockMinutes) * 60;
+    uint40 date = uint40(block.timestamp);
+    if (date < start) return true;
+    return date - start < uint40(self.timelockMinutes) * 60;
   }
 }

@@ -10,8 +10,12 @@ import {DirectWithBidsAndAsksDistribution} from
 import {Tick} from "@mgv/lib/core/TickLib.sol";
 import {MAX_TICK} from "@mgv/lib/core/Constants.sol";
 import {CoreKandel} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/CoreKandel.sol";
+import {OracleRange} from "./OracleRange.sol";
+import {OracleData, OracleLib} from "../libraries/OracleLib.sol";
 
-abstract contract KandelManagement {
+contract KandelManagement is OracleRange {
+  using OracleLib for OracleData;
+
   error NotManager();
   error InvalidDistribution();
 
@@ -30,7 +34,16 @@ abstract contract KandelManagement {
     _;
   }
 
-  constructor(AbstractKandelSeeder seeder, address base, address quote, uint256 tickSpacing, address _manager) {
+  constructor(
+    AbstractKandelSeeder seeder,
+    address base,
+    address quote,
+    uint256 tickSpacing,
+    address _manager,
+    OracleData memory _oracle,
+    address _owner,
+    address _guardian
+  ) OracleRange(_oracle, _owner, _guardian) {
     BASE = base;
     QUOTE = quote;
     TICK_SPACING = tickSpacing;
@@ -38,14 +51,12 @@ abstract contract KandelManagement {
     kandel = seeder.sow(OLKey(base, quote, tickSpacing), false);
   }
 
-  function setManager(address _manager) external onlyManager {
+  function setManager(address _manager) external onlyOwner {
     manager = _manager;
     emit SetManager(_manager);
   }
 
-  function _checkTick(Tick tick, bool isBid) internal view virtual returns (bool);
-
-  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers) internal view returns (Tick) {
+  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers) internal pure returns (Tick) {
     int256 minTick = MAX_TICK;
     for (uint256 i = 0; i < offers.length; i++) {
       if (offers[i].gives == 0) continue;
@@ -63,7 +74,8 @@ abstract contract KandelManagement {
   {
     // get ask with lowest tick => check it
     // bid with lowest tick => check its opposite
-    return _checkTick(_minTick(distribution.asks), false) && _checkTick(_minTick(distribution.bids), true);
+    OracleData memory _oracle = oracle;
+    return _oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids));
   }
 
   function _params() internal view returns (CoreKandel.Params memory params) {
