@@ -6,4 +6,8 @@ libs = ["lib"]
 [fmt]
 tab_width = 2
 
+[profile.ci]
+optimizer = true
+optimizer_runs = 200
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
