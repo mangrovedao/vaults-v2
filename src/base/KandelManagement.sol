@@ -21,7 +21,7 @@ contract KandelManagement is OracleRange {
 
   event SetManager(address indexed manager);
 
-  GeometricKandel public immutable kandel;
+  GeometricKandel public immutable KANDEL;
 
   address internal immutable BASE;
   address internal immutable QUOTE;
@@ -48,7 +48,7 @@ contract KandelManagement is OracleRange {
     QUOTE = quote;
     TICK_SPACING = tickSpacing;
     manager = _manager;
-    kandel = seeder.sow(OLKey(base, quote, tickSpacing), false);
+    KANDEL = seeder.sow(OLKey(base, quote, tickSpacing), false);
   }
 
   function setManager(address _manager) external onlyOwner {
@@ -56,7 +56,7 @@ contract KandelManagement is OracleRange {
     emit SetManager(_manager);
   }
 
-  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers) internal pure returns (Tick) {
+  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers) private pure returns (Tick) {
     int256 minTick = MAX_TICK;
     for (uint256 i = 0; i < offers.length; i++) {
       if (offers[i].gives == 0) continue;
@@ -68,7 +68,7 @@ contract KandelManagement is OracleRange {
   }
 
   function _checkDistribution(DirectWithBidsAndAsksDistribution.Distribution memory distribution)
-    internal
+    private
     view
     returns (bool)
   {
@@ -78,8 +78,8 @@ contract KandelManagement is OracleRange {
     return _oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids));
   }
 
-  function _params() internal view returns (CoreKandel.Params memory params) {
-    (uint32 gasprice, uint24 gasreq, uint32 stepSize, uint32 pricePoints) = kandel.params();
+  function _params() private view returns (CoreKandel.Params memory params) {
+    (uint32 gasprice, uint24 gasreq, uint32 stepSize, uint32 pricePoints) = KANDEL.params();
     params.gasprice = gasprice;
     params.gasreq = gasreq;
     params.stepSize = stepSize;
@@ -96,7 +96,7 @@ contract KandelManagement is OracleRange {
     uint256 askGives,
     CoreKandel.Params calldata parameters
   ) external payable onlyManager {
-    DirectWithBidsAndAsksDistribution.Distribution memory distribution = kandel.createDistribution(
+    DirectWithBidsAndAsksDistribution.Distribution memory distribution = KANDEL.createDistribution(
       from,
       to,
       baseQuoteTickIndex0,
@@ -108,7 +108,7 @@ contract KandelManagement is OracleRange {
       parameters.stepSize
     );
     if (!_checkDistribution(distribution)) revert InvalidDistribution();
-    kandel.populate{value: msg.value}(distribution, parameters, 0, 0);
+    KANDEL.populate{value: msg.value}(distribution, parameters, 0, 0);
   }
 
   function populateChunkFromOffset(
@@ -120,8 +120,8 @@ contract KandelManagement is OracleRange {
     uint256 askGives
   ) external onlyManager {
     CoreKandel.Params memory parameters = _params();
-    uint256 baseQuoteTickOffset = kandel.baseQuoteTickOffset();
-    DirectWithBidsAndAsksDistribution.Distribution memory distribution = kandel.createDistribution(
+    uint256 baseQuoteTickOffset = KANDEL.baseQuoteTickOffset();
+    DirectWithBidsAndAsksDistribution.Distribution memory distribution = KANDEL.createDistribution(
       from,
       to,
       baseQuoteTickIndex0,
@@ -133,6 +133,6 @@ contract KandelManagement is OracleRange {
       parameters.stepSize
     );
     if (!_checkDistribution(distribution)) revert InvalidDistribution();
-    kandel.populateChunk(distribution);
+    KANDEL.populateChunk(distribution);
   }
 }
