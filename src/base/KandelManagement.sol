@@ -58,6 +58,18 @@ contract KandelManagement is OracleRange {
    */
   event SetFeeRecipient(address indexed feeRecipient);
 
+  /**
+   * @notice Emitted when funds are deposited into the Kandel strategy
+   * @dev This indicates that funds are now actively managed by the Kandel market-making strategy
+   */
+  event FundsEnteredKandel();
+
+  /**
+   * @notice Emitted when funds are withdrawn from the Kandel strategy
+   * @dev This indicates that funds are no longer actively managed by Kandel and returned to the vault
+   */
+  event FundsExitedKandel();
+
   /*//////////////////////////////////////////////////////////////
                        IMMUTABLE VARIABLES
   //////////////////////////////////////////////////////////////*/
@@ -223,8 +235,11 @@ contract KandelManagement is OracleRange {
     // Validate distribution against oracle constraints
     if (!_checkDistribution(distribution)) revert InvalidDistribution();
 
-    // Set inKandel to true when populating
-    state.inKandel = true;
+    // Set inKandel to true when populating (emit event only if state changes)
+    if (!state.inKandel) {
+      state.inKandel = true;
+      emit FundsEnteredKandel();
+    }
 
     // Deposit all available funds to the Kandel strategy
     uint256 baseBalance = BASE.balanceOf(address(this));
@@ -298,7 +313,10 @@ contract KandelManagement is OracleRange {
     KANDEL.retractOffers(from, to);
     if (_withdrawFunds) {
       KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
-      state.inKandel = false;
+      if (state.inKandel) {
+        state.inKandel = false;
+        emit FundsExitedKandel();
+      }
     }
     if (withdrawProvisions) {
       KANDEL.withdrawFromMangrove(type(uint256).max, recipient);
@@ -312,7 +330,10 @@ contract KandelManagement is OracleRange {
    */
   function withdrawFunds() external onlyManager {
     KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
-    state.inKandel = false;
+    if (state.inKandel) {
+      state.inKandel = false;
+      emit FundsExitedKandel();
+    }
   }
 
   /**

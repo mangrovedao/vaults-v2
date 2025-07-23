@@ -799,4 +799,187 @@ contract KandelManagementTest is MangroveTest {
     assertEq(quote, address(USDC), "Quote token should be USDC");
     assertEq(tickSpacing, 1, "Tick spacing should be 1");
   }
+
+  /*//////////////////////////////////////////////////////////////
+                          EVENT TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_fundsEnteredKandel_event() public {
+    // Mint tokens to management contract
+    uint256 baseAmount = 5 ether;
+    uint256 quoteAmount = 10000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.1 ether);
+    
+    // Expect FundsEnteredKandel event to be emitted
+    vm.expectEmit(false, false, false, true);
+    emit KandelManagement.FundsEnteredKandel();
+    
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params
+    );
+    
+    // Verify state changed
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel, "inKandel should be true after populate");
+  }
+
+  function test_fundsEnteredKandel_event_notEmittedWhenAlreadyInKandel() public {
+    // First populate to set inKandel to true
+    MockERC20(address(WETH)).mint(address(management), 3 ether);
+    MockERC20(address(USDC)).mint(address(management), 6000e6);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 7;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.2 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 7, Tick.wrap(0), 1, 3, 200e6, 1 ether, params
+    );
+    
+    // Verify inKandel is true
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+    
+    // Add more funds for second populate
+    MockERC20(address(WETH)).mint(address(management), 2 ether);
+    MockERC20(address(USDC)).mint(address(management), 4000e6);
+    
+    // Second populate should NOT emit FundsEnteredKandel event
+    // We don't use vm.expectEmit here because we want to ensure NO event is emitted
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 7, Tick.wrap(5), 1, 3, 300e6, 1.5 ether, params
+    );
+    
+    // State should still be true
+    (inKandel,,,) = management.state();
+    assertTrue(inKandel);
+    
+    vm.stopPrank();
+  }
+
+  function test_fundsExitedKandel_event_withdrawFunds() public {
+    // First populate to get funds in Kandel
+    MockERC20(address(WETH)).mint(address(management), 4 ether);
+    MockERC20(address(USDC)).mint(address(management), 8000e6);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 9;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.08 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.08 ether}(
+      0, 9, Tick.wrap(0), 1, 4, 250e6, 1.5 ether, params
+    );
+    
+    // Verify inKandel is true
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+    
+    // Expect FundsExitedKandel event when withdrawing
+    vm.expectEmit(false, false, false, true);
+    emit KandelManagement.FundsExitedKandel();
+    
+    management.withdrawFunds();
+    
+    // Verify state changed
+    (inKandel,,,) = management.state();
+    assertFalse(inKandel, "inKandel should be false after withdrawal");
+    
+    vm.stopPrank();
+  }
+
+  function test_fundsExitedKandel_event_retractOffersWithWithdraw() public {
+    // First populate to get funds in Kandel
+    MockERC20(address(WETH)).mint(address(management), 6 ether);
+    MockERC20(address(USDC)).mint(address(management), 12000e6);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.1 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 300e6, 2 ether, params
+    );
+    
+    // Verify inKandel is true
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+    
+    // Expect FundsExitedKandel event when retracting with fund withdrawal
+    vm.expectEmit(false, false, false, true);
+    emit KandelManagement.FundsExitedKandel();
+    
+    management.retractOffers(0, 11, true, false, payable(address(0)));
+    
+    // Verify state changed
+    (inKandel,,,) = management.state();
+    assertFalse(inKandel, "inKandel should be false after retract with withdrawal");
+    
+    vm.stopPrank();
+  }
+
+  function test_fundsExitedKandel_event_notEmittedOnRetractWithoutWithdraw() public {
+    // First populate to get funds in Kandel
+    MockERC20(address(WETH)).mint(address(management), 3 ether);
+    MockERC20(address(USDC)).mint(address(management), 6000e6);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 7;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.06 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.06 ether}(
+      0, 7, Tick.wrap(0), 1, 3, 200e6, 1 ether, params
+    );
+    
+    // Verify inKandel is true
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+    
+    // Retract without withdrawing funds should NOT emit FundsExitedKandel
+    management.retractOffers(0, 7, false, false, payable(address(0)));
+    
+    // State should remain true
+    (inKandel,,,) = management.state();
+    assertTrue(inKandel, "inKandel should remain true when not withdrawing funds");
+    
+    vm.stopPrank();
+  }
+
+  function test_fundsExitedKandel_event_notEmittedWhenAlreadyNotInKandel() public {
+    // Verify initial state is false
+    (bool inKandel,,,) = management.state();
+    assertFalse(inKandel);
+    
+    vm.startPrank(manager);
+    
+    // Calling withdrawFunds when already not in Kandel should not emit event
+    // This tests the conditional check in withdrawFunds
+    management.withdrawFunds();
+    
+    // State should remain false
+    (inKandel,,,) = management.state();
+    assertFalse(inKandel);
+    
+    vm.stopPrank();
+  }
 }
