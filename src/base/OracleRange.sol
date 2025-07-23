@@ -96,6 +96,7 @@ contract OracleRange is Ownable {
    * @param _owner Address that will own the contract (can propose/accept oracle updates)
    * @param _guardian Address that can reject oracle proposals
    * @dev Sets the initial oracle's proposedAt timestamp to current block timestamp
+   * @dev Emits events for initial guardian and oracle state for proper indexing
    */
   constructor(OracleData memory _oracle, address _owner, address _guardian) {
     // Set proposal timestamp for initial oracle to current time
@@ -103,6 +104,12 @@ contract OracleRange is Ownable {
     oracle = _oracle;
     _initializeOwner(_owner);
     guardian = _guardian;
+
+    // Emit events for initial state for indexing purposes
+    bytes32 oracleKey = keccak256(abi.encode(_oracle));
+    emit GuardianChanged(address(0), _guardian);
+    emit ProposedOracle(oracleKey, _oracle);
+    emit AcceptedOracle(oracleKey);
   }
 
   /*//////////////////////////////////////////////////////////////

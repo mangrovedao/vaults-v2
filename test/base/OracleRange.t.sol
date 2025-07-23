@@ -274,6 +274,106 @@ contract OracleRangeTest is Test {
     assertEq(maxDev, 100);
   }
 
+  function test_constructor_emitsEvents() public {
+    address newOwner = makeAddr("newOwner");
+    address newGuardian = makeAddr("newGuardian");
+
+    OracleData memory initialOracle;
+    initialOracle.isStatic = true;
+    initialOracle.staticValue = Tick.wrap(200);
+    initialOracle.maxDeviation = 150;
+    initialOracle.timelockMinutes = 120;
+    initialOracle.proposedAt = uint40(block.timestamp);
+
+    // Expect GuardianChanged event from address(0) to newGuardian
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(address(0), newGuardian);
+
+    // Expect ProposedOracle event for initial oracle
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.ProposedOracle(keccak256(abi.encode(initialOracle)), initialOracle);
+
+    // Expect AcceptedOracle event for initial oracle
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.AcceptedOracle(keccak256(abi.encode(initialOracle)));
+
+    // Create new OracleRange instance (should emit all three events)
+    OracleRange newOracleRange = new OracleRange(initialOracle, newOwner, newGuardian);
+
+    // Verify the contract was initialized correctly
+    assertEq(newOracleRange.owner(), newOwner);
+    assertEq(newOracleRange.guardian(), newGuardian);
+
+    (bool isStatic,, Tick staticValue, uint16 maxDev,,) = newOracleRange.oracle();
+    assertTrue(isStatic);
+    assertEq(Tick.unwrap(staticValue), 200);
+    assertEq(maxDev, 150);
+  }
+
+  function test_constructor_emitsEventsWithZeroGuardian() public {
+    address newOwner = makeAddr("newOwner");
+    address zeroGuardian = address(0);
+
+    OracleData memory initialOracle;
+    initialOracle.isStatic = true;
+    initialOracle.staticValue = Tick.wrap(300);
+    initialOracle.maxDeviation = 200;
+    initialOracle.timelockMinutes = 60;
+    initialOracle.proposedAt = uint40(block.timestamp);
+
+    // Expect GuardianChanged event from address(0) to address(0)
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(address(0), address(0));
+
+    // Expect ProposedOracle event
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.ProposedOracle(keccak256(abi.encode(initialOracle)), initialOracle);
+
+    // Expect AcceptedOracle event
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.AcceptedOracle(keccak256(abi.encode(initialOracle)));
+
+    // Create new OracleRange instance with zero guardian
+    OracleRange newOracleRange = new OracleRange(initialOracle, newOwner, zeroGuardian);
+
+    // Verify the contract was initialized correctly
+    assertEq(newOracleRange.guardian(), address(0));
+  }
+
+  function test_constructor_emitsEventsWithDynamicOracle() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1500));
+
+    address newOwner = makeAddr("newOwner");
+    address newGuardian = makeAddr("newGuardian");
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 250;
+    dynamicOracle.timelockMinutes = 90;
+    dynamicOracle.proposedAt = uint40(block.timestamp);
+
+    // Expect all three events for dynamic oracle
+    vm.expectEmit(true, true, false, true);
+    emit OracleRange.GuardianChanged(address(0), newGuardian);
+
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.ProposedOracle(keccak256(abi.encode(dynamicOracle)), dynamicOracle);
+
+    vm.expectEmit(true, false, false, true);
+    emit OracleRange.AcceptedOracle(keccak256(abi.encode(dynamicOracle)));
+
+    // Create new OracleRange instance with dynamic oracle
+    OracleRange newOracleRange = new OracleRange(dynamicOracle, newOwner, newGuardian);
+
+    // Verify the contract was initialized correctly
+    (bool isStatic, IOracle oracle,, uint16 maxDev,,) = newOracleRange.oracle();
+    assertFalse(isStatic);
+    assertEq(address(oracle), address(mockOracle));
+    assertEq(maxDev, 250);
+  }
+
   /*//////////////////////////////////////////////////////////////
                       DYNAMIC ORACLE TESTS
   //////////////////////////////////////////////////////////////*/
