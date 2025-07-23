@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {GeometricKandel} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/GeometricKandel.sol";
 import {AbstractKandelSeeder} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/AbstractKandelSeeder.sol";
+import {GeometricKandel} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/GeometricKandel.sol";
 import {OLKey} from "@mgv/src/core/MgvLib.sol";
 import {DirectWithBidsAndAsksDistribution} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/DirectWithBidsAndAsksDistribution.sol";
@@ -45,18 +45,15 @@ abstract contract KandelManagement {
 
   function _checkTick(Tick tick, bool isBid) internal view virtual returns (bool);
 
-  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers)
-    internal
-    view
-    returns (int256 minTick)
-  {
-    minTick = MAX_TICK;
+  function _minTick(DirectWithBidsAndAsksDistribution.DistributionOffer[] memory offers) internal view returns (Tick) {
+    int256 minTick = MAX_TICK;
     for (uint256 i = 0; i < offers.length; i++) {
       if (offers[i].gives == 0) continue;
-      if (offers[i].tick < minTick) {
-        minTick = offers[i].tick;
+      if (Tick.unwrap(offers[i].tick) < minTick) {
+        minTick = Tick.unwrap(offers[i].tick);
       }
     }
+    return Tick.wrap(minTick);
   }
 
   function _checkDistribution(DirectWithBidsAndAsksDistribution.Distribution memory distribution)
@@ -69,6 +66,14 @@ abstract contract KandelManagement {
     return _checkTick(_minTick(distribution.asks), false) && _checkTick(_minTick(distribution.bids), true);
   }
 
+  function _params() internal view returns (CoreKandel.Params memory params) {
+    (uint32 gasprice, uint24 gasreq, uint32 stepSize, uint32 pricePoints) = kandel.params();
+    params.gasprice = gasprice;
+    params.gasreq = gasreq;
+    params.stepSize = stepSize;
+    params.pricePoints = pricePoints;
+  }
+
   function populateFromOffset(
     uint256 from,
     uint256 to,
@@ -77,7 +82,7 @@ abstract contract KandelManagement {
     uint256 firstAskIndex,
     uint256 bidGives,
     uint256 askGives,
-    Params calldata parameters
+    CoreKandel.Params calldata parameters
   ) external payable onlyManager {
     DirectWithBidsAndAsksDistribution.Distribution memory distribution = kandel.createDistribution(
       from,
@@ -102,7 +107,8 @@ abstract contract KandelManagement {
     uint256 bidGives,
     uint256 askGives
   ) external onlyManager {
-    CoreKandel.Params memory parameters = kandel.params();
+    CoreKandel.Params memory parameters = _params();
+    uint256 baseQuoteTickOffset = kandel.baseQuoteTickOffset();
     DirectWithBidsAndAsksDistribution.Distribution memory distribution = kandel.createDistribution(
       from,
       to,
