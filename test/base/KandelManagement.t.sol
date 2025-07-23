@@ -9,7 +9,7 @@ import {
   CoreKandel,
   OracleData
 } from "../../src/base/KandelManagement.sol";
-import {MangroveTest} from "./MangroveTest.t.sol";
+import {MangroveTest, MockERC20} from "./MangroveTest.t.sol";
 
 contract KandelManagementTest is MangroveTest {
   KandelManagement public management;
@@ -149,6 +149,173 @@ contract KandelManagementTest is MangroveTest {
     vm.prank(owner);
     vm.expectRevert(KandelManagement.NotManager.selector);
     management.populateFromOffset(0, 5, Tick.wrap(0), 1, 2, 100e6, 1 ether, params);
+  }
+
+  function test_populateFromOffset_withActualFunds() public {
+    // Mint tokens to the management contract
+    uint256 baseAmount = 10 ether; // 10 WETH
+    uint256 quoteAmount = 20000e6; // 20,000 USDC
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+    
+    // Verify initial balances
+    assertEq(WETH.balanceOf(address(management)), baseAmount);
+    assertEq(USDC.balanceOf(address(management)), quoteAmount);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), 0);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    // Check initial state
+    (bool inKandelBefore,,,) = management.state();
+    assertFalse(inKandelBefore);
+    
+    // Set up Kandel parameters
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    // Provide ETH for offer provisioning
+    vm.deal(address(manager), 0.1 ether);
+    
+    // Call populateFromOffset as manager
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.1 ether}(
+      0, // from
+      11, // to
+      Tick.wrap(0), // baseQuoteTickIndex0
+      1, // baseQuoteTickOffset
+      5, // firstAskIndex (5 bids, 6 asks)
+      100e6, // bidGives (100 USDC per bid)
+      1 ether, // askGives (1 WETH per ask)
+      params
+    );
+    
+    // Verify funds were transferred to Kandel
+    assertEq(WETH.balanceOf(address(management)), 0, "Management should have no WETH left");
+    assertEq(USDC.balanceOf(address(management)), 0, "Management should have no USDC left");
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount, "Kandel should have received all WETH");
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount, "Kandel should have received all USDC");
+    
+    // Verify state changes
+    (bool inKandelAfter,,,) = management.state();
+    assertTrue(inKandelAfter, "inKandel should be set to true");
+  }
+
+  function test_populateFromOffset_withPartialFunds() public {
+    // Mint only base tokens to test partial funding
+    uint256 baseAmount = 5 ether; // 5 WETH, no USDC
+    
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    
+    // Verify initial balances
+    assertEq(WETH.balanceOf(address(management)), baseAmount);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    
+    // Set up Kandel parameters for asks only (since we only have base tokens)
+    CoreKandel.Params memory params;
+    params.pricePoints = 6;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.05 ether);
+    
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.05 ether}(
+      5, // from (start from ask side)
+      6, // to
+      Tick.wrap(0), // baseQuoteTickIndex0
+      1, // baseQuoteTickOffset
+      5, // firstAskIndex (only asks, no bids)
+      0, // bidGives (no bids)
+      1 ether, // askGives
+      params
+    );
+    
+    // Verify only WETH was transferred (no USDC to transfer)
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+  }
+
+  function test_populateFromOffset_withZeroFunds() public {
+    // Test with no tokens minted (should still work for strategy setup)
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 3;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.01 ether);
+    
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.01 ether}(
+      0, // from
+      3, // to
+      Tick.wrap(0), // baseQuoteTickIndex0
+      1, // baseQuoteTickOffset
+      1, // firstAskIndex
+      0, // bidGives
+      0, // askGives (no funds to give)
+      params
+    );
+    
+    // Balances should remain zero
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    assertEq(WETH.balanceOf(address(management.KANDEL())), 0);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
+    
+    // But inKandel should still be set
+    (bool inKandel,,,) = management.state();
+    assertTrue(inKandel);
+  }
+
+  function test_multiplePopulateFromOffset_accumulatesFunds() public {
+    // First populate with some funds
+    uint256 initialBase = 5 ether;
+    uint256 initialQuote = 10000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), initialBase);
+    MockERC20(address(USDC)).mint(address(management), initialQuote);
+    
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+    
+    vm.deal(address(manager), 0.2 ether);
+    vm.startPrank(manager);
+    
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params
+    );
+    
+    // Verify first deposit
+    assertEq(WETH.balanceOf(address(management.KANDEL())), initialBase);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), initialQuote);
+    
+    // Add more funds to management contract
+    uint256 additionalBase = 3 ether;
+    uint256 additionalQuote = 5000e6;
+    
+    MockERC20(address(WETH)).mint(address(management), additionalBase);
+    MockERC20(address(USDC)).mint(address(management), additionalQuote);
+    
+    // Second populate should add to existing funds
+    management.populateFromOffset{value: 0.1 ether}(
+      0, 11, Tick.wrap(10), 1, 5, 200e6, 2 ether, params
+    );
+    
+    vm.stopPrank();
+    
+    // Verify total funds accumulated in Kandel
+    assertEq(WETH.balanceOf(address(management.KANDEL())), initialBase + additionalBase);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), initialQuote + additionalQuote);
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
   }
 
   function test_populateChunkFromOffset() public {
