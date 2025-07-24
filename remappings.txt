@@ -7,3 +7,5 @@
 @mgv-strats/lib/=lib/mangrove-strats/lib/
 @mgv-strats/test/=lib/mangrove-strats/test/
 @mgv-strats/script/=lib/mangrove-strats/script/
+
+@solady/src/=lib/solady/src/

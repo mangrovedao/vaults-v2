@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "lib/solady/src/auth/Ownable.sol";
+import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {OracleData, OracleLib} from "../libraries/OracleLib.sol";
+import {Tick} from "@mgv/lib/core/TickLib.sol";
 
 /**
  * @title OracleRange
@@ -123,6 +124,17 @@ contract OracleRange is Ownable {
    */
   function _guardInitializeOwner() internal pure override returns (bool) {
     return true;
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                       PUBLIC FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Gets the current tick based on oracle configuration
+   */
+  function getCurrentTick() public view returns (Tick) {
+    return oracle.tick();
   }
 
   /*//////////////////////////////////////////////////////////////
