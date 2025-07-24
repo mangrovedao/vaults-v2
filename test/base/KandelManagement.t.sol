@@ -129,17 +129,8 @@ contract KandelManagementTest is MangroveTest {
     oracle.timelockMinutes = 60;
 
     uint16 testFee = 5_000; // 5% with precision 100,000
-    KandelManagement testManagement = new KandelManagement(
-      seeder,
-      address(WETH),
-      address(USDC),
-      1,
-      manager,
-      testFee,
-      oracle,
-      owner,
-      guardian
-    );
+    KandelManagement testManagement =
+      new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, testFee, oracle, owner, guardian);
 
     (,, uint16 managementFee,) = testManagement.state();
     assertEq(managementFee, testFee, "Should accept 5% management fee");
@@ -251,7 +242,11 @@ contract KandelManagementTest is MangroveTest {
       revert("10,001 should be rejected");
     } catch (bytes memory reason) {
       // Expected to fail
-      assertEq(bytes4(reason), KandelManagement.MaxManagementFeeExceeded.selector, "Should revert with MaxManagementFeeExceeded");
+      assertEq(
+        bytes4(reason),
+        KandelManagement.MaxManagementFeeExceeded.selector,
+        "Should revert with MaxManagementFeeExceeded"
+      );
     }
   }
 
@@ -263,32 +258,14 @@ contract KandelManagementTest is MangroveTest {
     oracle.timelockMinutes = 60;
 
     // Test 9999 (9.999%) - should work
-    KandelManagement testManagement9999 = new KandelManagement(
-      seeder,
-      address(WETH),
-      address(USDC),
-      1,
-      manager,
-      9_999,
-      oracle,
-      owner,
-      guardian
-    );
+    KandelManagement testManagement9999 =
+      new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 9_999, oracle, owner, guardian);
     (,, uint16 fee9999,) = testManagement9999.state();
     assertEq(fee9999, 9_999, "Should accept 9.999% fee");
 
     // Test 10000 (10%) - should work
-    KandelManagement testManagement10000 = new KandelManagement(
-      seeder,
-      address(WETH),
-      address(USDC),
-      1,
-      manager,
-      10_000,
-      oracle,
-      owner,
-      guardian
-    );
+    KandelManagement testManagement10000 =
+      new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 10_000, oracle, owner, guardian);
     (,, uint16 fee10000,) = testManagement10000.state();
     assertEq(fee10000, 10_000, "Should accept 10% fee");
 
@@ -305,25 +282,16 @@ contract KandelManagementTest is MangroveTest {
     oracle.timelockMinutes = 60;
 
     uint16[] memory validFees = new uint16[](6);
-    validFees[0] = 0;      // 0%
-    validFees[1] = 500;    // 0.5%
-    validFees[2] = 1_000;  // 1%
-    validFees[3] = 2_000;  // 2%
-    validFees[4] = 5_000;  // 5%
+    validFees[0] = 0; // 0%
+    validFees[1] = 500; // 0.5%
+    validFees[2] = 1_000; // 1%
+    validFees[3] = 2_000; // 2%
+    validFees[4] = 5_000; // 5%
     validFees[5] = 10_000; // 10%
 
-    for (uint i = 0; i < validFees.length; i++) {
-      KandelManagement testManagement = new KandelManagement(
-        seeder,
-        address(WETH),
-        address(USDC),
-        1,
-        manager,
-        validFees[i],
-        oracle,
-        owner,
-        guardian
-      );
+    for (uint256 i = 0; i < validFees.length; i++) {
+      KandelManagement testManagement =
+        new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, validFees[i], oracle, owner, guardian);
 
       (,, uint16 actualFee,) = testManagement.state();
       assertEq(actualFee, validFees[i], string(abi.encodePacked("Should accept fee: ", validFees[i])));
@@ -338,25 +306,15 @@ contract KandelManagementTest is MangroveTest {
     oracle.timelockMinutes = 60;
 
     uint16[] memory invalidFees = new uint16[](5);
-    invalidFees[0] = 10_001;  // 10.001%
-    invalidFees[1] = 15_000;  // 15%
-    invalidFees[2] = 20_000;  // 20%
-    invalidFees[3] = 65_535;  // Maximum uint16 (65.535%)
+    invalidFees[0] = 10_001; // 10.001%
+    invalidFees[1] = 15_000; // 15%
+    invalidFees[2] = 20_000; // 20%
+    invalidFees[3] = 65_535; // Maximum uint16 (65.535%)
     invalidFees[4] = type(uint16).max; // Maximum uint16
 
-    for (uint i = 0; i < invalidFees.length; i++) {
+    for (uint256 i = 0; i < invalidFees.length; i++) {
       vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
-      new KandelManagement(
-        seeder,
-        address(WETH),
-        address(USDC),
-        1,
-        manager,
-        invalidFees[i],
-        oracle,
-        owner,
-        guardian
-      );
+      new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, invalidFees[i], oracle, owner, guardian);
     }
   }
 

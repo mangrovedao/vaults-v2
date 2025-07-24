@@ -287,14 +287,13 @@ contract MangroveVaultV2Test is MangroveTest {
     (uint256 sharesOut,,) = vault.mint(user1, 1 ether, 2000e6, 0);
 
     uint256 sharesToBurn = sharesOut / 2;
-    
+
     // Calculate expected amounts and balances
     uint256 expectedBaseOut = 0.5 ether;
     uint256 expectedQuoteOut = 1000e6;
     uint256 expectedBaseBalance = 0.5 ether;
     uint256 expectedQuoteBalance = 1000e6;
 
-    
     // TODO: check here we seem to have accrued fees which should not happen
     // vm.expectEmit(false, false, false, true);
     // emit ERC20.Transfer(user1, address(0), sharesToBurn);
@@ -309,7 +308,7 @@ contract MangroveVaultV2Test is MangroveTest {
     // Setup: two users mint
     vm.prank(user1);
     (uint256 shares1,,) = vault.mint(user1, 1 ether, 2000e6, 0);
-    
+
     vm.prank(user2);
     (uint256 shares2,,) = vault.mint(user2, 0.5 ether, 1000e6, 0);
 
