@@ -55,7 +55,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
   function test_constructor_inheritsKandelManagementFunctionality() public view {
     // Test that inherited functionality works
-    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp) = management.state();
+    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp,,) = management.state();
 
     assertEq(inKandel, false, "inKandel should be false initially");
     assertEq(feeRecipient, owner, "Fee recipient should be owner initially");
@@ -676,7 +676,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     vm.prank(newManager);
     management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 100e6, 1 ether, params);
 
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,,) = management.state();
     assertTrue(inKandel, "Should be in Kandel after populate");
   }
 }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 // Internal dependencies
 import {KandelManagementRebalancing} from "./base/KandelManagementRebalancing.sol";
 import {OracleData} from "./libraries/OracleLib.sol";
+import {GeometricKandel} from "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/GeometricKandel.sol";
 
 // External dependencies (Mangrove strategies)
 import {AbstractKandelSeeder} from
@@ -21,6 +22,22 @@ import {ReentrancyGuard} from "@solady/src/utils/ReentrancyGuard.sol";
 import {Ownable} from "@solady/src/auth/Ownable.sol";
 import {SafeCastLib} from "@solady/src/utils/SafeCastLib.sol";
 import {ERC20} from "@solady/src/tokens/ERC20.sol";
+import {LibCall} from "@solady/src/utils/LibCall.sol";
+
+/**
+ * @notice Parameters for configuring the Kandel strategy
+ * @dev This struct is used to store and pass configuration parameters for the Kandel strategy
+ * @param gasprice The gas price for offer execution (if zero, stays unchanged or defaults to mangrove gasprice)
+ * @param gasreq The gas required for offer execution (if zero, stays unchanged or defaults to mangrove gasreq)
+ * @param stepSize The step size between offers
+ * @param pricePoints The number of price points in the distribution
+ */
+struct Params {
+  uint32 gasprice;
+  uint24 gasreq;
+  uint32 stepSize;
+  uint32 pricePoints;
+}
 
 /**
  * @notice Rebalance parameters struct
@@ -44,6 +61,7 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
   using SafeCastLib for int256;
   using Math for int256;
   using Math for uint256;
+  using LibCall for address;
 
   /*//////////////////////////////////////////////////////////////
                             ERRORS
@@ -478,7 +496,7 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
         minQuoteOut = quoteMax;
       }
 
-      (, shares) = ((tick.inboundFromOutboundUp(minBaseOut) + minQuoteOut) * QUOTE_SCALE).zeroFloorSub(MINIMUM_LIQUIDITY);
+      (shares) = ((tick.inboundFromOutboundUp(minBaseOut) + minQuoteOut) * QUOTE_SCALE).zeroFloorSub(MINIMUM_LIQUIDITY);
     }
   }
 
@@ -518,14 +536,14 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
 
     if (params.sell) {
       // Selling base for quote
-      (, uint256 missingBase) = params.amount.zeroFloorSub(baseBalance);
+      (uint256 missingBase) = params.amount.zeroFloorSub(baseBalance);
       if (missingBase > 0) {
         KANDEL.withdrawFunds(missingBase, 0, address(this));
       }
       BASE.safeApproveWithRetry(params.target, params.amount);
     } else {
       // Buying base with quote
-      (, uint256 missingQuote) = params.amount.zeroFloorSub(quoteBalance);
+      (uint256 missingQuote) = params.amount.zeroFloorSub(quoteBalance);
       if (missingQuote > 0) {
         KANDEL.withdrawFunds(0, missingQuote, address(this));
       }
@@ -533,7 +551,7 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
     }
 
     // Execute swap
-    params.target.functionCall(params.data);
+    params.target.callContract(params.data);
 
     // Check results
     (uint256 newBaseBalance, uint256 newQuoteBalance) = vaultBalances();
@@ -576,7 +594,8 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
     _accrueManagementFees();
 
     // Withdraw all offers and funds from Kandel to the vault
-    KANDEL.withdrawAllOffersAndFundsTo(payable(address(this)));
+    Params memory params = _params(KANDEL);
+    KANDEL.retractAndWithdraw(0, params.pricePoints, type(uint256).max, type(uint256).max, 0, payable(address(this)));
 
     // Update state to reflect funds are no longer in Kandel
     state.inKandel = false;
@@ -598,6 +617,32 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
     KANDEL.depositFunds(baseBalance, quoteBalance);
   }
 
+   /**
+   * @notice Retrieves the parameters of a GeometricKandel instance
+   * @param kandel The GeometricKandel instance
+   * @return params_ The Params struct containing the kandel parameters
+   */
+  function _params(GeometricKandel kandel) internal view returns (Params memory params_) {
+    // (params_.gasprice, params_.gasreq, params_.stepSize, params_.pricePoints) = kandel.params();
+    bytes32 selectorUnstripped = keccak256("params()");
+    bytes memory data;
+
+    assembly {
+      mstore(data, selectorUnstripped)
+
+      let success := staticcall(gas(), kandel, data, 0x04, params_, 0x80)
+
+      // Check if the call was successful
+      if iszero(success) {
+        // Revert with the same error message
+        let ptr := mload(0x40)
+        returndatacopy(ptr, 0, returndatasize())
+        revert(ptr, returndatasize())
+      }
+    }
+  }
+
+
   /**
    * @notice Accrues management fees globally based on time elapsed
    * @dev Called before any major operation to ensure fees are up to date
@@ -606,13 +651,13 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
     uint256 managementFee = state.managementFee;
     if (managementFee == 0) return;
 
-    uint256 lastAccrualTime = state.lastFeeAccrualTime;
+    uint256 lastAccrualTime = state.lastTimestamp;
     uint256 timeElapsed = block.timestamp - lastAccrualTime;
     if (timeElapsed == 0) return;
 
     uint256 _totalSupply = totalSupply();
     if (_totalSupply == 0) {
-      state.lastFeeAccrualTime = uint64(block.timestamp);
+      state.lastTimestamp = uint40(block.timestamp);
       return;
     }
 
@@ -630,7 +675,7 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
       emit ManagementFeesAccrued(feeShares, timeElapsed);
     }
 
-    state.lastFeeAccrualTime = uint64(block.timestamp);
+    state.lastTimestamp = uint40(block.timestamp);
   }
 
   /**
@@ -767,7 +812,7 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
         quoteAmount = maxQuote;
       }
 
-      (, shares) = ((tick.inboundFromOutboundUp(baseAmount) + quoteAmount) * QUOTE_SCALE).zeroFloorSub(MINIMUM_LIQUIDITY);
+      (shares) = ((tick.inboundFromOutboundUp(baseAmount) + quoteAmount) * QUOTE_SCALE).zeroFloorSub(MINIMUM_LIQUIDITY);
       _mint(address(this), MINIMUM_LIQUIDITY);
     }
 
@@ -827,7 +872,8 @@ contract MangroveVaultV2 is ERC20, KandelManagementRebalancing, ReentrancyGuard 
     (uint256 vaultBase, uint256 vaultQuote) = vaultBalances();
     if (userShareOfBase > vaultBase || userShareOfQuote > vaultQuote) {
       // Not enough liquidity in vault, need to withdraw from Kandel
-      KANDEL.withdrawAllOffersAndFundsTo(payable(address(this)));
+     Params memory params = _params(KANDEL);
+    KANDEL.retractAndWithdraw(0, params.pricePoints, type(uint256).max, type(uint256).max, 0, payable(address(this)));
     }
 
     // Burn user shares

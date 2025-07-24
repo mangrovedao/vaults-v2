@@ -462,7 +462,7 @@ contract KandelManagement is OracleRange {
     // Get the current oracle configuration
     OracleData memory _oracle = oracle;
     // Validate that min ask and min bid ticks are within oracle range
-    return _oracle.accepts(state.bestAsk, state.bestBid);
+    return _oracle.accepts(Tick.wrap(int256(state.bestAsk)), Tick.wrap(int256(state.bestBid)));
   }
 
   /**
