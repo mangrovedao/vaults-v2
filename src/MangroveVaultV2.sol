@@ -54,6 +54,24 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    */
   event AccruedFees(uint256 feeShares);
 
+  /**
+   * @notice Emitted when tokens are received by the vault
+   * @param baseIn The amount of base tokens received
+   * @param quoteIn The amount of quote tokens received
+   * @param totalBaseBalance The total base token balance after receiving tokens
+   * @param totalQuoteBalance The total quote token balance after receiving tokens
+   */
+  event ReceivedTokens(uint256 baseIn, uint256 quoteIn, uint256 totalBaseBalance, uint256 totalQuoteBalance);
+
+  /**
+   * @notice Emitted when tokens are sent from the vault
+   * @param baseOut The amount of base tokens sent
+   * @param quoteOut The amount of quote tokens sent
+   * @param totalBaseBalance The total base token balance after sending tokens
+   * @param totalQuoteBalance The total quote token balance after sending tokens
+   */
+  event SentTokens(uint256 baseOut, uint256 quoteOut, uint256 totalBaseBalance, uint256 totalQuoteBalance);
+
   /*//////////////////////////////////////////////////////////////
                            CONSTANTS
   //////////////////////////////////////////////////////////////*/
@@ -259,7 +277,10 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     }
 
     _mint(to, sharesOut);
-    return (sharesOut, baseIn, quoteIn);
+
+    // Emit received tokens event with current balances
+    (uint256 totalBaseBalance, uint256 totalQuoteBalance) = totalBalances();
+    emit ReceivedTokens(baseIn, quoteIn, totalBaseBalance, totalQuoteBalance);
   }
 
   /**
@@ -296,6 +317,9 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     _burn(from, shares);
     baseOut = _sendTokensTo(BASE, receiver, baseOut);
     quoteOut = _sendTokensTo(QUOTE, receiver, quoteOut);
+
+    // Emit sent tokens event with current balances
+    emit SentTokens(baseOut, quoteOut, baseBalance - baseOut, quoteBalance - quoteOut);
   }
 
   /*//////////////////////////////////////////////////////////////
