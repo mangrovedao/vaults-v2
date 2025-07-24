@@ -135,7 +135,7 @@ contract OracleRange is Ownable {
    * @notice Proposes a new oracle configuration
    * @param _oracle The new oracle configuration to propose
    * @dev Only owner can propose. Validates oracle before acceptance and sets proposedAt timestamp
-   * @dev The proposed oracle will be subject to timelock defined in _oracle.timelockMinutes
+   * @dev The proposed oracle will be subject to timelock defined in the current oracle
    * @dev Reverts with InvalidOracle if the oracle configuration cannot provide valid tick values
    */
   function proposeOracle(OracleData memory _oracle) external onlyOwner {
