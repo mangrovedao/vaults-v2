@@ -3,8 +3,11 @@ pragma solidity ^0.8.20;
 
 import {KandelManagement} from "./KandelManagement.sol";
 import {OracleData, OracleLib} from "../libraries/OracleLib.sol";
+import {TickLib, Tick} from "@mgv/lib/core/TickLib.sol";
 import {AbstractKandelSeeder} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/AbstractKandelSeeder.sol";
+import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 
 /**
  * @title KandelManagementRebalancing
@@ -16,6 +19,8 @@ import {AbstractKandelSeeder} from
  */
 contract KandelManagementRebalancing is KandelManagement {
   using OracleLib for OracleData;
+  using SafeTransferLib for address;
+  using LibCall for address;
 
   /*//////////////////////////////////////////////////////////////
                             ERRORS
@@ -32,6 +37,15 @@ contract KandelManagementRebalancing is KandelManagement {
 
   /// @notice Thrown when trying to whitelist an invalid address (Kandel contract, base token, or quote token)
   error InvalidWhitelistAddress();
+
+  /// @notice Thrown when trying to rebalance with a non-whitelisted target address
+  error InvalidRebalanceAddress();
+
+  /// @notice Thrown when there is insufficient token balance for the requested operation
+  error InsufficientBalance();
+
+  /// @notice Thrown when the trade tick is outside the oracle's acceptable range
+  error InvalidTradeTick();
 
   /*//////////////////////////////////////////////////////////////
                             EVENTS
@@ -94,6 +108,137 @@ contract KandelManagementRebalancing is KandelManagement {
     address _owner,
     address _guardian
   ) KandelManagement(_seeder, _base, _quote, _tickSpacing, _manager, _managementFee, _oracle, _owner, _guardian) {}
+
+  /*//////////////////////////////////////////////////////////////
+                       REBALANCING FUNCTION
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Parameters for rebalancing operations
+   * @param isSell True if selling base token for quote token, false if buying base token with quote token
+   * @param amountIn The amount of tokens to send for the swap
+   * @param minAmountOut The minimum amount of tokens expected to receive (slippage protection)
+   * @param target The whitelisted contract address to perform the swap
+   * @param data The call data to send to the target contract for the swap
+   */
+  struct RebalanceParams {
+    bool isSell;
+    uint256 amountIn;
+    uint256 minAmountOut;
+    address target;
+    bytes data;
+  }
+
+  /**
+   * @notice Prepares tokens for rebalancing by withdrawing from Kandel if needed and approving target
+   * @param isSell True if selling base token (using quote), false if buying base token
+   * @param withdrawAll Whether to withdraw all available tokens from Kandel or just the needed amount
+   * @param _amount The amount of tokens needed for the operation
+   * @param _target The target contract address to approve for spending the tokens
+   * @return localBalance The final balance of tokens available in the vault after preparation
+   * @dev Withdraws tokens from Kandel strategy if vault balance is insufficient
+   * @dev Reverts with InsufficientBalance if even after withdrawal there are not enough tokens
+   */
+  function _prepareToken(bool isSell, bool withdrawAll, uint256 _amount, address _target)
+    internal
+    returns (uint256 localBalance)
+  {
+    address _token = isSell ? BASE : QUOTE;
+    localBalance = _token.balanceOf(address(this));
+    if (localBalance < _amount) {
+      if (isSell) {
+        try KANDEL.withdrawFunds(withdrawAll ? type(uint256).max : _amount - localBalance, 0, address(this)) {}
+        catch {
+          revert InsufficientBalance();
+        }
+      } else {
+        try KANDEL.withdrawFunds(0, withdrawAll ? type(uint256).max : _amount - localBalance, address(this)) {}
+        catch {
+          revert InsufficientBalance();
+        }
+      }
+      localBalance = _token.balanceOf(address(this));
+    }
+    if (localBalance < _amount) revert InsufficientBalance();
+    _token.safeApprove(_target, _amount);
+  }
+
+  /**
+   * @notice Deposits any remaining tokens in the vault back to the Kandel strategy
+   * @dev Checks balances of both base and quote tokens in the vault
+   * @dev Only calls depositFunds if there are tokens to deposit
+   * @dev Approves Kandel to spend tokens before depositing
+   */
+  function _sendTokenToKandel() internal {
+    uint256 baseBalance = BASE.balanceOf(address(this));
+    uint256 quoteBalance = QUOTE.balanceOf(address(this));
+    bool deposit;
+    if (baseBalance > 0) {
+      BASE.safeApprove(address(KANDEL), baseBalance);
+      deposit = true;
+    }
+    if (quoteBalance > 0) {
+      QUOTE.safeApprove(address(KANDEL), quoteBalance);
+      deposit = true;
+    }
+    if (deposit) {
+      KANDEL.depositFunds(baseBalance, quoteBalance);
+    }
+  }
+
+  /**
+   * @notice Performs a rebalancing operation by swapping tokens through a whitelisted target
+   * @param _params The rebalancing parameters including swap direction, amounts, and target
+   * @param withdrawAll Whether to withdraw all available tokens from Kandel or just the needed amount
+   * @return sent The actual amount of tokens sent in the swap
+   * @return received The actual amount of tokens received from the swap
+   * @return callResult The return data from the target contract call
+   * @dev Only callable by the manager
+   * @dev Only whitelisted addresses can be used as swap targets
+   * @dev Validates the trade price against oracle constraints
+   * @dev Automatically deposits remaining tokens back to Kandel after the swap
+   * @dev Reverts with InvalidRebalanceAddress if target is not whitelisted
+   * @dev Reverts with InvalidTradeTick if the trade price is outside oracle range
+   * @dev Reverts with InsufficientBalance if there are not enough tokens available
+   */
+  function rebalance(RebalanceParams memory _params, bool withdrawAll)
+    external
+    payable
+    onlyManager
+    returns (uint256 sent, uint256 received, bytes memory callResult)
+  {
+    if (!isWhitelisted[_params.target]) revert InvalidRebalanceAddress();
+    // take all tokens to the vault (if needed) and give allowance to the target
+    // this also takes a balance snapshot of the token
+    uint256 localBalance = _prepareToken(_params.isSell, withdrawAll, _params.amountIn, _params.target);
+    // take a balance snapshot of the token we receive
+    uint256 receiveTokenBalance = _params.isSell ? QUOTE.balanceOf(address(this)) : BASE.balanceOf(address(this));
+
+    // call the target contract
+    callResult = _params.target.callContract(msg.value, _params.data);
+
+    // get the amount of token we sent (if underflow, it means we received which is not expected)
+    sent = _params.isSell ? localBalance - BASE.balanceOf(address(this)) : localBalance - QUOTE.balanceOf(address(this));
+    // get the amount of token we received (if underflow, it means we sent which is not expected)
+    received = _params.isSell
+      ? QUOTE.balanceOf(address(this)) - receiveTokenBalance
+      : BASE.balanceOf(address(this)) - receiveTokenBalance;
+
+    if (sent > 0) {
+      Tick tradeTick = TickLib.tickFromVolumes(_params.isSell ? received : sent, _params.isSell ? sent : received);
+      if (!oracle.accepts(tradeTick)) revert InvalidTradeTick();
+    }
+
+    // remove allowance
+    if (_params.isSell) {
+      QUOTE.safeApprove(_params.target, 0);
+    } else {
+      BASE.safeApprove(_params.target, 0);
+    }
+
+    // send token to the kandel if needed
+    if (state.inKandel) _sendTokenToKandel();
+  }
 
   /*//////////////////////////////////////////////////////////////
                        WHITELIST FUNCTIONS

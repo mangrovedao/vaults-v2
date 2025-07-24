@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {KandelManagementRebalancing} from "../../src/base/KandelManagementRebalancing.sol";
+import {KandelManagementRebalancing, TickLib} from "../../src/base/KandelManagementRebalancing.sol";
 import {
   KandelManagement,
   OracleRange,
@@ -12,8 +12,28 @@ import {
 } from "../../src/base/KandelManagement.sol";
 import {MangroveTest, MockERC20} from "./MangroveTest.t.sol";
 
+/**
+ * @title MockSwapContract
+ * @notice Mock contract for testing rebalancing swaps
+ * @dev Simulates token swaps with configurable exchange rates and slippage
+ */
+contract MockSwapContract {
+  bool shouldRevert;
+
+  function setShouldRevert(bool _shouldRevert) external {
+    shouldRevert = _shouldRevert;
+  }
+
+  function swap(address _tokenIn, address _tokenOut, uint256 _amountIn, uint256 amountOut) external {
+    if (shouldRevert) revert("MockSwapContract: should revert");
+    MockERC20(_tokenIn).transferFrom(msg.sender, address(this), _amountIn);
+    MockERC20(_tokenOut).mint(msg.sender, amountOut);
+  }
+}
+
 contract KandelManagementRebalancingTest is MangroveTest {
   KandelManagementRebalancing public management;
+  MockSwapContract public mockSwap;
   address public manager;
   address public guardian;
   address public owner;
@@ -24,6 +44,9 @@ contract KandelManagementRebalancingTest is MangroveTest {
     manager = makeAddr("manager");
     guardian = makeAddr("guardian");
     owner = makeAddr("owner");
+
+    // Deploy mock swap contract
+    mockSwap = new MockSwapContract();
 
     OracleData memory oracle;
     oracle.isStatic = true;
@@ -678,5 +701,533 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     (bool inKandel,,,) = management.state();
     assertTrue(inKandel, "Should be in Kandel after populate");
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                       REBALANCING TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_rebalance_sellBaseForQuote() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    uint256 baseAmount = 10 ether;
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+
+    // Prepare swap parameters for selling base token
+    uint256 swapAmount = 5 ether;
+    uint256 expectedOutput = 5000e6; // 5000 USDC
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 4800e6, // Minimum acceptable output with slippage
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Execute rebalance
+    vm.prank(manager);
+    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+
+    // Verify results
+    assertEq(sent, swapAmount, "Should have sent the correct amount of base tokens");
+    assertEq(received, expectedOutput, "Should have received the expected quote tokens");
+
+    // Verify final balances
+    assertEq(WETH.balanceOf(address(management)), baseAmount - swapAmount, "Remaining base tokens should be correct");
+    assertEq(USDC.balanceOf(address(management)), expectedOutput, "Should have received quote tokens");
+  }
+
+  function test_rebalance_buyBaseWithQuote() public {
+    // setting the oracle to accept all ticks
+
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    uint256 quoteAmount = 10000e6;
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+
+    // Prepare swap parameters for buying base token
+    uint256 swapAmount = 5000e6;
+    uint256 expectedOutput = 5 ether; // 5 ETH
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(USDC), address(WETH), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: false,
+      amountIn: swapAmount,
+      minAmountOut: 4.8 ether, // Minimum acceptable output with slippage
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Execute rebalance
+    vm.prank(manager);
+    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+
+    // Verify results
+    assertEq(sent, swapAmount, "Should have sent the correct amount of quote tokens");
+    assertEq(received, expectedOutput, "Should have received the expected base tokens");
+
+    // Verify final balances
+    assertEq(USDC.balanceOf(address(management)), quoteAmount - swapAmount, "Remaining quote tokens should be correct");
+    assertEq(WETH.balanceOf(address(management)), expectedOutput, "Should have received base tokens");
+  }
+
+  function test_rebalance_invalidTarget() public {
+    address nonWhitelistedTarget = makeAddr("nonWhitelistedTarget");
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: 1 ether,
+      minAmountOut: 900e6,
+      target: nonWhitelistedTarget,
+      data: ""
+    });
+
+    vm.prank(manager);
+    vm.expectRevert(KandelManagementRebalancing.InvalidRebalanceAddress.selector);
+    management.rebalance(params, false);
+  }
+
+  function test_rebalance_insufficientBalance() public {
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Don't add any funds to management contract
+    bytes memory swapData =
+      abi.encodeWithSignature("swap(address,address,uint256,uint256)", address(WETH), address(USDC), 1 ether, 1000e6);
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: 1 ether,
+      minAmountOut: 900e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    vm.prank(manager);
+    vm.expectRevert(KandelManagementRebalancing.InsufficientBalance.selector);
+    management.rebalance(params, false);
+  }
+
+  function test_rebalance_swapContractReverts() public {
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Set mock to revert
+    mockSwap.setShouldRevert(true);
+
+    // Add funds to management contract
+    MockERC20(address(WETH)).mint(address(management), 10 ether);
+
+    bytes memory swapData =
+      abi.encodeWithSignature("swap(address,address,uint256,uint256)", address(WETH), address(USDC), 1 ether, 1000e6);
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: 1 ether,
+      minAmountOut: 900e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    vm.prank(manager);
+    vm.expectRevert("MockSwapContract: should revert");
+    management.rebalance(params, false);
+  }
+
+  function test_rebalance_withKandelFunds() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to Kandel by populating it
+    uint256 baseAmount = 10 ether;
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+
+    CoreKandel.Params memory kandelParams;
+    kandelParams.pricePoints = 5;
+    kandelParams.stepSize = 1;
+
+    vm.deal(address(manager), 0.01 ether);
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 0, 1 ether, kandelParams);
+
+    // Verify funds are in Kandel
+    (uint256 kandelBase,) = management.kandelBalances();
+    assertGt(kandelBase, 0, "Should have funds in Kandel");
+
+    // Prepare rebalance parameters
+    uint256 swapAmount = 3 ether;
+    uint256 expectedOutput = 3000e6;
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 2900e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Execute rebalance (should withdraw from Kandel)
+    vm.prank(manager);
+    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+
+    // Verify swap occurred
+    assertEq(sent, swapAmount, "Should have sent the correct amount");
+    assertEq(received, expectedOutput, "Should have received expected tokens");
+
+    // Verify some funds were withdrawn from Kandel
+    (uint256 kandelBaseAfter,) = management.kandelBalances();
+    assertLt(kandelBaseAfter, kandelBase, "Should have withdrawn funds from Kandel");
+  }
+
+  function test_rebalance_invalidTradeTick() public {
+    // Setup oracle with restrictive deviation
+    OracleData memory restrictiveOracle;
+    restrictiveOracle.isStatic = true;
+    restrictiveOracle.staticValue = Tick.wrap(0);
+    restrictiveOracle.maxDeviation = 10; // Very small deviation
+    restrictiveOracle.timelockMinutes = 60;
+
+    vm.prank(owner);
+    management.proposeOracle(restrictiveOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    MockERC20(address(WETH)).mint(address(management), 10 ether);
+
+    // Create a swap with very bad exchange rate (1 ETH for 1 USDC instead of ~1000)
+    uint256 swapAmount = 1 ether;
+    uint256 badOutput = 1e6; // Only 1 USDC for 1 ETH (terrible rate)
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, badOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 0, // No minimum to ensure swap executes
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    vm.prank(manager);
+    vm.expectRevert(KandelManagementRebalancing.InvalidTradeTick.selector);
+    management.rebalance(params, false);
+  }
+
+  function test_rebalance_withdrawAll() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Setup Kandel with funds
+    uint256 baseAmount = 10 ether;
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+
+    CoreKandel.Params memory kandelParams;
+    kandelParams.pricePoints = 5;
+    kandelParams.stepSize = 1;
+
+    vm.deal(address(manager), 0.01 ether);
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 0, 1 ether, kandelParams);
+
+    // Get initial Kandel balance
+    (uint256 kandelBaseBefore,) = management.kandelBalances();
+
+    // Prepare rebalance with withdrawAll = true
+    uint256 swapAmount = 1 ether;
+    uint256 expectedOutput = 1000e6;
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 950e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Execute rebalance with withdrawAll = true
+    vm.prank(manager);
+    (uint256 sent, uint256 received,) = management.rebalance(params, true);
+
+    // Verify swap occurred correctly
+    assertEq(sent, swapAmount, "Should have sent the correct amount");
+    assertEq(received, expectedOutput, "Should have received expected output");
+
+    // Verify funds were withdrawn from Kandel (withdrawAll should pull more than needed)
+    (uint256 kandelBaseAfter,) = management.kandelBalances();
+    assertLt(kandelBaseAfter, kandelBaseBefore, "Should have withdrawn funds from Kandel");
+  }
+
+  function test_rebalance_autoDepositsToKandel() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    uint256 baseAmount = 15 ether;
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), 1000e6);
+
+    // First populate Kandel so we have a strategy
+    CoreKandel.Params memory kandelParams;
+    kandelParams.pricePoints = 5;
+    kandelParams.stepSize = 1;
+
+    vm.deal(address(manager), 0.01 ether);
+    vm.prank(manager);
+    management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 0, 1 ether, kandelParams);
+
+    // Prepare swap that will leave remaining tokens
+    uint256 swapAmount = 2 ether;
+    uint256 expectedOutput = 2000e6;
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 1900e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Get initial balances
+    (uint256 vaultBaseBefore, uint256 vaultQuoteBefore) = management.vaultBalances();
+    (uint256 kandelBaseBefore, uint256 kandelQuoteBefore) = management.kandelBalances();
+
+    // Execute rebalance
+    vm.prank(manager);
+    management.rebalance(params, false);
+
+    // Verify remaining tokens were deposited to Kandel
+    (uint256 vaultBaseAfter, uint256 vaultQuoteAfter) = management.vaultBalances();
+    (uint256 kandelBaseAfter, uint256 kandelQuoteAfter) = management.kandelBalances();
+
+    // Vault should have minimal tokens (only dust), Kandel should have more
+
+    assertEq(vaultBaseAfter, 0, "Vault should have no remaining base tokens");
+    assertEq(vaultQuoteAfter, 0, "Vault should have no remaining quote tokens");
+    assertEq(vaultBaseBefore, 0, "Vault should have no remaining base tokens");
+    assertEq(vaultQuoteBefore, 0, "Vault should have no remaining quote tokens");
+    assertLt(kandelBaseAfter, kandelBaseBefore, "Kandel should have less base tokens");
+    assertGt(kandelQuoteAfter, kandelQuoteBefore, "Kandel should have more quote tokens");
+  }
+
+  function test_rebalance_clearsTokenApprovals() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    MockERC20(address(WETH)).mint(address(management), 10 ether);
+
+    uint256 swapAmount = 5 ether;
+    uint256 expectedOutput = 5000e6;
+    bytes memory swapData = abi.encodeWithSignature(
+      "swap(address,address,uint256,uint256)", address(WETH), address(USDC), swapAmount, expectedOutput
+    );
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: swapAmount,
+      minAmountOut: 4800e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Execute rebalance
+    vm.prank(manager);
+    management.rebalance(params, false);
+
+    // Verify that token approval was cleared after the swap
+    assertEq(WETH.allowance(address(management), address(mockSwap)), 0, "WETH approval should be cleared");
+    assertEq(USDC.allowance(address(management), address(mockSwap)), 0, "USDC approval should be cleared");
+  }
+
+  function test_rebalance_onlyManager() public {
+    // setting the oracle to accept all ticks
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+
+    vm.prank(owner);
+    management.proposeOracle(oracle);
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptOracle();
+
+    // Setup: Whitelist the mock swap contract
+    vm.prank(owner);
+    management.proposeWhitelist(address(mockSwap));
+    vm.warp(block.timestamp + 61 minutes);
+    vm.prank(owner);
+    management.acceptWhitelist(address(mockSwap));
+
+    // Add funds to management contract
+    MockERC20(address(WETH)).mint(address(management), 10 ether);
+
+    bytes memory swapData =
+      abi.encodeWithSignature("swap(address,address,uint256,uint256)", address(WETH), address(USDC), 1 ether, 1000e6);
+
+    KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
+      isSell: true,
+      amountIn: 1 ether,
+      minAmountOut: 950e6,
+      target: address(mockSwap),
+      data: swapData
+    });
+
+    // Test that non-manager cannot call rebalance
+    address nonManager = makeAddr("nonManager");
+    vm.prank(nonManager);
+    vm.expectRevert(); // Should revert due to onlyManager modifier
+    management.rebalance(params, false);
+
+    // Test that owner cannot call rebalance (only manager can)
+    vm.prank(owner);
+    vm.expectRevert(); // Should revert due to onlyManager modifier
+    management.rebalance(params, false);
+
+    // Test that manager can call rebalance
+    vm.prank(manager);
+    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+
+    assertEq(sent, 1 ether, "Manager should be able to execute rebalance");
+    assertEq(received, 1000e6, "Manager should be able to execute rebalance");
   }
 }

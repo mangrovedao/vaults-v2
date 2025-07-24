@@ -57,6 +57,22 @@ library OracleLib {
   }
 
   /**
+   * @notice Validates whether a given tick is within acceptable deviation from the oracle's current tick
+   * @param self The oracle data struct containing deviation parameters
+   * @param _tick The tick to validate against the oracle (ask tick)
+   * @return bool True if the tick is within acceptable deviation range, false otherwise
+   * @dev Checks if the absolute difference between oracle tick and given tick is within maxDeviation
+   * @dev Current implementation only checks one direction (oracleTick - tick_ <= maxDeviation)
+   * @dev This means it accepts ticks that are at most maxDeviation below the oracle tick
+   */
+  function accepts(OracleData memory self, Tick _tick) internal view returns (bool) {
+    int256 tick_ = Tick.unwrap(_tick);
+    int256 oracleTick = Tick.unwrap(self.tick());
+
+    return oracleTick - tick_ <= int256(uint256(self.maxDeviation));
+  }
+
+  /**
    * @notice Validates whether ask and bid ticks are within acceptable deviation from oracle price
    * @param self The oracle data configuration
    * @param askTick The tick value for the ask side (higher price, lower tick)
