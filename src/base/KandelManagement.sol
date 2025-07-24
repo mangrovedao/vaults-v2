@@ -14,7 +14,8 @@ import {Tick} from "@mgv/lib/core/TickLib.sol";
 import {MAX_TICK} from "@mgv/lib/core/Constants.sol";
 
 // External dependencies (solady)
-import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {SafeTransferLib} from "@solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib as Math} from "@solady/src/utils/FixedPointMathLib.sol";
 
 // Internal dependencies
 import {OracleRange} from "./OracleRange.sol";
@@ -102,6 +103,8 @@ contract KandelManagement is OracleRange {
     address feeRecipient; // 160 bits -> 168 bits
     uint16 managementFee; // 16 bits -> 184 bits
     uint40 lastTimestamp; // 40 bits -> 224 bits
+    int24 bestBid; // 24 bits -> 248 bits
+    int24 bestAsk; // 24 bits -> 272 bits
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -167,7 +170,9 @@ contract KandelManagement is OracleRange {
       inKandel: false,
       feeRecipient: _owner,
       managementFee: _managementFee,
-      lastTimestamp: uint40(block.timestamp)
+      lastTimestamp: uint40(block.timestamp),
+      bestBid: type(int24).max,
+      bestAsk: type(int24).max
     });
 
     // Deploy Kandel instance with reneging disabled (false parameter)
@@ -237,8 +242,12 @@ contract KandelManagement is OracleRange {
       parameters.pricePoints,
       parameters.stepSize
     );
+    // Update bestBid and bestAsk
+    state.bestBid = int24(Math.min(Tick.unwrap(_minTick(distribution.bids)), state.bestBid));
+    state.bestAsk = int24(Math.min(Tick.unwrap(_minTick(distribution.asks)), state.bestAsk));
+
     // Validate distribution against oracle constraints
-    if (!_checkDistribution(distribution)) revert InvalidDistribution();
+    if (!_checkDistribution()) revert InvalidDistribution();
 
     // Set inKandel to true when populating (emit event only if state changes)
     if (!state.inKandel) {
@@ -298,8 +307,13 @@ contract KandelManagement is OracleRange {
       parameters.pricePoints,
       parameters.stepSize
     );
+    // Update bestBid and bestAsk
+    state.bestBid = int24(Math.min(Tick.unwrap(_minTick(distribution.bids)), state.bestBid));
+    state.bestAsk = int24(Math.min(Tick.unwrap(_minTick(distribution.asks)), state.bestAsk));
+
     // Validate distribution against oracle constraints
-    if (!_checkDistribution(distribution)) revert InvalidDistribution();
+    if (!_checkDistribution()) revert InvalidDistribution();
+
     // Update Kandel chunk with validated distribution
     KANDEL.populateChunk(distribution);
   }
@@ -367,7 +381,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The amount of quote tokens in the management contract
    * @dev These are tokens that are not yet deposited into the Kandel strategy
    */
-  function vaultBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function vaultBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     baseBalance = BASE.balanceOf(address(this));
     quoteBalance = QUOTE.balanceOf(address(this));
   }
@@ -378,7 +392,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The amount of quote tokens in the Kandel strategy
    * @dev These are tokens actively used by the Kandel strategy for market making
    */
-  function kandelBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function kandelBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     // Ask offers sell base tokens, so reserveBalance for asks returns base token balance
     baseBalance = KANDEL.reserveBalance(OfferType.Ask);
     // Bid offers sell quote tokens, so reserveBalance for bids returns quote token balance
@@ -391,7 +405,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The total amount of quote tokens (vault + Kandel)
    * @dev This represents the total underlying assets controlled by this management contract
    */
-  function totalBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function totalBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     (uint256 vaultBase, uint256 vaultQuote) = this.vaultBalances();
     (uint256 kandelBase, uint256 kandelQuote) = this.kandelBalances();
 
@@ -436,20 +450,19 @@ contract KandelManagement is OracleRange {
 
   /**
    * @notice Validates a distribution against oracle price constraints
-   * @param distribution The distribution to validate
    * @return bool True if distribution respects oracle constraints, false otherwise
    * @dev Checks that the minimum ask tick and minimum bid tick are within oracle deviation
    * @dev Uses the current active oracle configuration for validation
    */
-  function _checkDistribution(DirectWithBidsAndAsksDistribution.Distribution memory distribution)
-    private
+  function _checkDistribution()
+    internal
     view
     returns (bool)
   {
     // Get the current oracle configuration
     OracleData memory _oracle = oracle;
     // Validate that min ask and min bid ticks are within oracle range
-    return _oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids));
+    return _oracle.accepts(state.bestAsk, state.bestBid);
   }
 
   /**
