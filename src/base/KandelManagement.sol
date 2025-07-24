@@ -42,6 +42,9 @@ contract KandelManagement is OracleRange {
   /// @notice Thrown when the proposed distribution doesn't respect oracle constraints
   error InvalidDistribution();
 
+  /// @notice Thrown when the management fee exceeds the maximum allowed fee
+  error MaxManagementFeeExceeded();
+
   /*//////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
@@ -69,6 +72,13 @@ contract KandelManagement is OracleRange {
    * @dev This indicates that funds are no longer actively managed by Kandel and returned to the vault
    */
   event FundsExitedKandel();
+
+  /*//////////////////////////////////////////////////////////////
+                           CONSTANTS
+  //////////////////////////////////////////////////////////////*/
+
+  /// @notice Maximum allowed management fee (precision is 100_000)
+  uint16 private constant MAX_MANAGEMENT_FEE = 10_000; // 10%
 
   /*//////////////////////////////////////////////////////////////
                        IMMUTABLE VARIABLES
@@ -161,6 +171,9 @@ contract KandelManagement is OracleRange {
     QUOTE = quote;
     TICK_SPACING = tickSpacing;
     manager = _manager;
+
+    // Validate management fee
+    if (_managementFee > MAX_MANAGEMENT_FEE) revert MaxManagementFeeExceeded();
 
     // Initialize state with default values
     state = State({

@@ -485,7 +485,7 @@ contract MangroveVaultV2Test is MangroveTest {
     USDC.approve(address(vault), quoteAmount);
     vm.stopPrank();
 
-    if (absDeviation > maxDeviation) {
+    if (absDeviation >= maxDeviation) {
       vm.expectRevert(MangroveVaultV2.InvalidInitialMintAmounts.selector);
       vm.prank(user1);
       vault.mint(user1, baseAmount, quoteAmount, 0);

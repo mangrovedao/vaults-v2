@@ -16,7 +16,7 @@ contract KandelManagementTest is MangroveTest {
   address public manager;
   address public guardian;
   address public owner;
-  uint16 public constant MANAGEMENT_FEE = 500; // 5%
+  uint16 public constant MANAGEMENT_FEE = 5_000; // 5% with precision 100,000
 
   function setUp() public virtual override {
     super.setUp();
@@ -94,6 +94,272 @@ contract KandelManagementTest is MangroveTest {
     assertEq(management.manager(), newManager);
   }
 
+  /*//////////////////////////////////////////////////////////////
+                  MANAGEMENT FEE VALIDATION TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_constructor_maxManagementFee() public {
+    // Test that exactly 10% (10,000 with precision 100,000) is accepted
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    KandelManagement testManagement = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      10_000, // 10% with precision 100,000
+      oracle,
+      owner,
+      guardian
+    );
+
+    (,, uint16 managementFee,) = testManagement.state();
+    assertEq(managementFee, 10_000, "Should accept exactly 10% management fee");
+  }
+
+  function test_constructor_belowMaxManagementFee() public {
+    // Test that fees below 10% are accepted
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    uint16 testFee = 5_000; // 5% with precision 100,000
+    KandelManagement testManagement = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      testFee,
+      oracle,
+      owner,
+      guardian
+    );
+
+    (,, uint16 managementFee,) = testManagement.state();
+    assertEq(managementFee, testFee, "Should accept 5% management fee");
+  }
+
+  function test_constructor_zeroManagementFee() public {
+    // Test that 0% fee is accepted
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    KandelManagement testManagement = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      0, // 0% fee
+      oracle,
+      owner,
+      guardian
+    );
+
+    (,, uint16 managementFee,) = testManagement.state();
+    assertEq(managementFee, 0, "Should accept 0% management fee");
+  }
+
+  function test_constructor_exceedsMaxManagementFee() public {
+    // Test that fees above 10% are rejected
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      10_001, // 10.001% - just above the limit
+      oracle,
+      owner,
+      guardian
+    );
+  }
+
+  function test_constructor_exceedsMaxManagementFeeSignificantly() public {
+    // Test with significantly higher fee
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      50_000, // 50% - way above the limit
+      oracle,
+      owner,
+      guardian
+    );
+  }
+
+  function test_constructor_maxUint16ManagementFee() public {
+    // Test with maximum possible uint16 value
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      type(uint16).max, // Maximum uint16 value (65535)
+      oracle,
+      owner,
+      guardian
+    );
+  }
+
+  function test_maxManagementFeeConstant() public {
+    // Test that the max fee is 10% (10,000 with precision 100,000)
+    // Since constant is now private, we test the behavior indirectly
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    // This should work - exactly at the limit
+    try new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 10_000, oracle, owner, guardian) {
+      // Success expected
+    } catch {
+      revert("10,000 (10%) should be accepted");
+    }
+
+    // This should fail - just above the limit
+    try new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 10_001, oracle, owner, guardian) {
+      revert("10,001 should be rejected");
+    } catch (bytes memory reason) {
+      // Expected to fail
+      assertEq(bytes4(reason), KandelManagement.MaxManagementFeeExceeded.selector, "Should revert with MaxManagementFeeExceeded");
+    }
+  }
+
+  function test_constructor_boundaryValues() public {
+    // Test boundary values around the maximum (10% = 10,000)
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    // Test 9999 (9.999%) - should work
+    KandelManagement testManagement9999 = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      9_999,
+      oracle,
+      owner,
+      guardian
+    );
+    (,, uint16 fee9999,) = testManagement9999.state();
+    assertEq(fee9999, 9_999, "Should accept 9.999% fee");
+
+    // Test 10000 (10%) - should work
+    KandelManagement testManagement10000 = new KandelManagement(
+      seeder,
+      address(WETH),
+      address(USDC),
+      1,
+      manager,
+      10_000,
+      oracle,
+      owner,
+      guardian
+    );
+    (,, uint16 fee10000,) = testManagement10000.state();
+    assertEq(fee10000, 10_000, "Should accept 10% fee");
+
+    // Test 10001 (10.001%) - should fail
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 10_001, oracle, owner, guardian);
+  }
+
+  function test_constructor_commonFeeValues() public {
+    // Test common fee values that should all be accepted (with precision 100,000)
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    uint16[] memory validFees = new uint16[](6);
+    validFees[0] = 0;      // 0%
+    validFees[1] = 500;    // 0.5%
+    validFees[2] = 1_000;  // 1%
+    validFees[3] = 2_000;  // 2%
+    validFees[4] = 5_000;  // 5%
+    validFees[5] = 10_000; // 10%
+
+    for (uint i = 0; i < validFees.length; i++) {
+      KandelManagement testManagement = new KandelManagement(
+        seeder,
+        address(WETH),
+        address(USDC),
+        1,
+        manager,
+        validFees[i],
+        oracle,
+        owner,
+        guardian
+      );
+
+      (,, uint16 actualFee,) = testManagement.state();
+      assertEq(actualFee, validFees[i], string(abi.encodePacked("Should accept fee: ", validFees[i])));
+    }
+  }
+
+  function test_constructor_invalidFeeValues() public {
+    // Test invalid fee values that should all be rejected (with precision 100,000)
+    OracleData memory oracle;
+    oracle.isStatic = true;
+    oracle.maxDeviation = 100;
+    oracle.timelockMinutes = 60;
+
+    uint16[] memory invalidFees = new uint16[](5);
+    invalidFees[0] = 10_001;  // 10.001%
+    invalidFees[1] = 15_000;  // 15%
+    invalidFees[2] = 20_000;  // 20%
+    invalidFees[3] = 65_535;  // Maximum uint16 (65.535%)
+    invalidFees[4] = type(uint16).max; // Maximum uint16
+
+    for (uint i = 0; i < invalidFees.length; i++) {
+      vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+      new KandelManagement(
+        seeder,
+        address(WETH),
+        address(USDC),
+        1,
+        manager,
+        invalidFees[i],
+        oracle,
+        owner,
+        guardian
+      );
+    }
+  }
+
   function test_setManager_onlyOwner() public {
     vm.prank(manager);
     vm.expectRevert();
@@ -124,7 +390,7 @@ contract KandelManagementTest is MangroveTest {
 
     assertEq(inKandel, false);
     assertEq(feeRecipient, owner);
-    assertEq(managementFee, MANAGEMENT_FEE);
+    assertEq(managementFee, MANAGEMENT_FEE); // Now 5,000 (5% with precision 100,000)
     assertGt(lastTimestamp, 0);
   }
 
@@ -369,7 +635,7 @@ contract KandelManagementTest is MangroveTest {
     address newManager = makeAddr("newManager");
     address newOwner = makeAddr("newOwner");
     address newGuardian = makeAddr("newGuardian");
-    uint16 newManagementFee = 1000; // 10%
+    uint16 newManagementFee = 7_500; // 7.5% with precision 100,000
 
     OracleData memory testOracle;
     testOracle.isStatic = true;
@@ -405,7 +671,7 @@ contract KandelManagementTest is MangroveTest {
   function test_constructor_emitsEventsWithSameOwnerManager() public {
     address ownerManager = makeAddr("ownerManager");
     address testGuardian = makeAddr("testGuardian");
-    uint16 testFee = 750; // 7.5%
+    uint16 testFee = 2_500; // 2.5% with precision 100,000
 
     OracleData memory testOracle;
     testOracle.isStatic = true;
