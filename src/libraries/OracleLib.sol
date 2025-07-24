@@ -57,6 +57,23 @@ library OracleLib {
   }
 
   /**
+   * @notice Validates whether a given tick is within acceptable absolute deviation from the oracle's current tick
+   * @param self The oracle data struct containing deviation parameters and oracle configuration
+   * @param _tick The tick value to validate against the oracle price
+   * @return bool True if the absolute distance between oracle tick and given tick is within maxDeviation, false otherwise
+   * @dev Uses absolute distance calculation via FixedPointMathLib.dist() to check deviation in both directions
+   * @dev This function provides symmetric validation - accepts ticks both above and below the oracle tick
+   * @dev Unlike accepts(), this function checks |oracleTick - tick| <= maxDeviation (bidirectional)
+   * @dev May revert if the oracle call fails when querying external oracles
+   */
+  function withinDeviation(OracleData memory self, Tick _tick) internal view returns (bool) {
+    int256 tick_ = Tick.unwrap(_tick);
+    int256 oracleTick = Tick.unwrap(self.tick());
+    uint256 distance = FixedPointMathLib.dist(oracleTick, tick_);
+    return distance <= uint256(self.maxDeviation);
+  }
+
+  /**
    * @notice Validates whether a given tick is within acceptable deviation from the oracle's current tick
    * @param self The oracle data struct containing deviation parameters
    * @param _tick The tick to validate against the oracle (ask tick)

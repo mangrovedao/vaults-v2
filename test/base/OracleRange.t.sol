@@ -767,4 +767,206 @@ contract OracleRangeTest is Test {
     vm.prank(newGuardian2);
     oracleRange.rejectOracle(); // Should succeed
   }
+
+  /*//////////////////////////////////////////////////////////////
+                   GET CURRENT TICK INFO TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_getCurrentTickInfo_staticOracle() public view {
+    // Test with the initial static oracle setup
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+
+    assertEq(Tick.unwrap(currentTick), 100, "Current tick should match static value");
+    assertTrue(isStatic, "Oracle should be static");
+    assertEq(maxDeviation, 100, "Max deviation should match oracle config");
+  }
+
+  function test_getCurrentTickInfo_afterStaticOracleUpdate() public {
+    // Propose and accept a new static oracle
+    OracleData memory newOracle;
+    newOracle.isStatic = true;
+    newOracle.staticValue = Tick.wrap(500);
+    newOracle.maxDeviation = 250;
+    newOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(newOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Test the updated oracle info
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+
+    assertEq(Tick.unwrap(currentTick), 500, "Current tick should match new static value");
+    assertTrue(isStatic, "Oracle should still be static");
+    assertEq(maxDeviation, 250, "Max deviation should match new oracle config");
+  }
+
+  function test_getCurrentTickInfo_dynamicOracle() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1800));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 300;
+    dynamicOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Test dynamic oracle info
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+
+    assertEq(Tick.unwrap(currentTick), 1800, "Current tick should match dynamic oracle value");
+    assertFalse(isStatic, "Oracle should not be static");
+    assertEq(maxDeviation, 300, "Max deviation should match dynamic oracle config");
+  }
+
+  function test_getCurrentTickInfo_dynamicOracleChangingValue() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1000));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 200;
+    dynamicOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Initial state
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 1000, "Initial tick should be 1000");
+    assertFalse(isStatic, "Oracle should not be static");
+    assertEq(maxDeviation, 200, "Max deviation should be 200");
+
+    // Change the mock oracle's value
+    mockOracle.setTick(Tick.wrap(2500));
+
+    // Test that getCurrentTickInfo reflects the new value
+    (currentTick, isStatic, maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 2500, "Tick should reflect updated oracle value");
+    assertFalse(isStatic, "Oracle should still not be static");
+    assertEq(maxDeviation, 200, "Max deviation should remain unchanged");
+  }
+
+  function test_getCurrentTickInfo_dynamicOracleReverts() public {
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(1500));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 100;
+    dynamicOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Configure oracle to revert
+    mockOracle.setShouldRevert(true);
+
+    // getCurrentTickInfo should revert when the oracle fails
+    vm.expectRevert("MockOracle: Configured to revert");
+    oracleRange.getCurrentTickInfo();
+  }
+
+  function test_getCurrentTickInfo_multipleOracleTransitions() public {
+    // Start with static oracle (already set up in setUp)
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 100, "Initial static tick should be 100");
+    assertTrue(isStatic, "Should start with static oracle");
+    assertEq(maxDeviation, 100, "Initial max deviation should be 100");
+
+    // Transition to dynamic oracle
+    MockOracle mockOracle = new MockOracle();
+    mockOracle.setTick(Tick.wrap(2000));
+
+    OracleData memory dynamicOracle;
+    dynamicOracle.isStatic = false;
+    dynamicOracle.oracle = IOracle(address(mockOracle));
+    dynamicOracle.maxDeviation = 400;
+    dynamicOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(dynamicOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Test dynamic oracle
+    (currentTick, isStatic, maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 2000, "Dynamic tick should be 2000");
+    assertFalse(isStatic, "Should now be dynamic oracle");
+    assertEq(maxDeviation, 400, "Max deviation should be 400");
+
+    // Transition back to static oracle
+    OracleData memory newStaticOracle;
+    newStaticOracle.isStatic = true;
+    newStaticOracle.staticValue = Tick.wrap(750);
+    newStaticOracle.maxDeviation = 150;
+    newStaticOracle.timelockMinutes = 30;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(newStaticOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    // Test back to static oracle
+    (currentTick, isStatic, maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 750, "Static tick should be 750");
+    assertTrue(isStatic, "Should be back to static oracle");
+    assertEq(maxDeviation, 150, "Max deviation should be 150");
+  }
+
+  function test_getCurrentTickInfo_zeroMaxDeviation() public {
+    OracleData memory zeroDeviationOracle;
+    zeroDeviationOracle.isStatic = true;
+    zeroDeviationOracle.staticValue = Tick.wrap(1200);
+    zeroDeviationOracle.maxDeviation = 0; // Zero deviation
+    zeroDeviationOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(zeroDeviationOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), 1200, "Current tick should be 1200");
+    assertTrue(isStatic, "Oracle should be static");
+    assertEq(maxDeviation, 0, "Max deviation should be 0");
+  }
+
+  function test_getCurrentTickInfo_maxDeviationBoundaries() public {
+    OracleData memory maxDeviationOracle;
+    maxDeviationOracle.isStatic = true;
+    maxDeviationOracle.staticValue = Tick.wrap(-500);
+    maxDeviationOracle.maxDeviation = type(uint16).max; // Maximum possible deviation
+    maxDeviationOracle.timelockMinutes = 60;
+
+    vm.startPrank(owner);
+    oracleRange.proposeOracle(maxDeviationOracle);
+    vm.warp(block.timestamp + 61 minutes);
+    oracleRange.acceptOracle();
+    vm.stopPrank();
+
+    (Tick currentTick, bool isStatic, uint16 maxDeviation) = oracleRange.getCurrentTickInfo();
+    assertEq(Tick.unwrap(currentTick), -500, "Current tick should be -500");
+    assertTrue(isStatic, "Oracle should be static");
+    assertEq(maxDeviation, type(uint16).max, "Max deviation should be maximum uint16");
+  }
 }

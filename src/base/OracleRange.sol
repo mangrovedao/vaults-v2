@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {OracleData, OracleLib} from "../libraries/OracleLib.sol";
+import {Tick} from "@mgv/lib/core/TickLib.sol";
 
 /**
  * @title OracleRange
@@ -101,6 +102,7 @@ contract OracleRange is Ownable {
   constructor(OracleData memory _oracle, address _owner, address _guardian) {
     // Set proposal timestamp for initial oracle to current time
     _oracle.proposedAt = uint40(block.timestamp);
+    if (!_oracle.isValid()) revert InvalidOracle();
     oracle = _oracle;
     _initializeOwner(_owner);
     guardian = _guardian;
@@ -180,5 +182,18 @@ contract OracleRange is Ownable {
     address oldGuardian = guardian;
     guardian = newGuardian;
     emit GuardianChanged(oldGuardian, newGuardian);
+  }
+
+  /**
+   * @notice Returns the current tick value along with oracle metadata
+   * @return currentTick The current tick value from the active oracle
+   * @return isStatic Whether the oracle uses a static value or external oracle
+   * @return maxDeviation The maximum allowed deviation in ticks from the oracle price
+   * @dev This function may revert if the external oracle is unavailable or returns invalid data
+   */
+  function getCurrentTickInfo() external view returns (Tick currentTick, bool isStatic, uint16 maxDeviation) {
+    currentTick = oracle.tick();
+    isStatic = oracle.isStatic;
+    maxDeviation = oracle.maxDeviation;
   }
 }

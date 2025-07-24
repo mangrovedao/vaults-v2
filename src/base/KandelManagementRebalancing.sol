@@ -8,6 +8,7 @@ import {AbstractKandelSeeder} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/AbstractKandelSeeder.sol";
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibCall} from "lib/solady/src/utils/LibCall.sol";
+import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
 
 /**
  * @title KandelManagementRebalancing
@@ -17,7 +18,7 @@ import {LibCall} from "lib/solady/src/utils/LibCall.sol";
  *      be targets for rebalancing operations for the vault.
  * @author Mangrove
  */
-contract KandelManagementRebalancing is KandelManagement {
+contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransient {
   using OracleLib for OracleData;
   using SafeTransferLib for address;
   using LibCall for address;
@@ -42,7 +43,7 @@ contract KandelManagementRebalancing is KandelManagement {
   error InvalidRebalanceAddress();
 
   /// @notice Thrown when there is insufficient token balance for the requested operation
-  error InsufficientBalance();
+  error InsufficientBalanceForRebalance();
 
   /// @notice Thrown when the trade tick is outside the oracle's acceptable range
   error InvalidTradeTick();
@@ -149,17 +150,17 @@ contract KandelManagementRebalancing is KandelManagement {
       if (isSell) {
         try KANDEL.withdrawFunds(withdrawAll ? type(uint256).max : _amount - localBalance, 0, address(this)) {}
         catch {
-          revert InsufficientBalance();
+          revert InsufficientBalanceForRebalance();
         }
       } else {
         try KANDEL.withdrawFunds(0, withdrawAll ? type(uint256).max : _amount - localBalance, address(this)) {}
         catch {
-          revert InsufficientBalance();
+          revert InsufficientBalanceForRebalance();
         }
       }
       localBalance = _token.balanceOf(address(this));
     }
-    if (localBalance < _amount) revert InsufficientBalance();
+    if (localBalance < _amount) revert InsufficientBalanceForRebalance();
     _token.safeApprove(_target, _amount);
   }
 
@@ -199,12 +200,13 @@ contract KandelManagementRebalancing is KandelManagement {
    * @dev Automatically deposits remaining tokens back to Kandel after the swap
    * @dev Reverts with InvalidRebalanceAddress if target is not whitelisted
    * @dev Reverts with InvalidTradeTick if the trade price is outside oracle range
-   * @dev Reverts with InsufficientBalance if there are not enough tokens available
+   * @dev Reverts with InsufficientBalanceForRebalance if there are not enough tokens available
    */
   function rebalance(RebalanceParams memory _params, bool withdrawAll)
     external
     payable
     onlyManager
+    nonReentrant
     returns (uint256 sent, uint256 received, bytes memory callResult)
   {
     if (!isWhitelisted[_params.target]) revert InvalidRebalanceAddress();

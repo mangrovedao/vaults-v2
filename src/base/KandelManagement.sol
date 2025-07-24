@@ -391,7 +391,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The total amount of quote tokens (vault + Kandel)
    * @dev This represents the total underlying assets controlled by this management contract
    */
-  function totalBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function totalBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     (uint256 vaultBase, uint256 vaultQuote) = this.vaultBalances();
     (uint256 kandelBase, uint256 kandelQuote) = this.kandelBalances();
 

@@ -830,7 +830,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     management.rebalance(params, false);
   }
 
-  function test_rebalance_insufficientBalance() public {
+  function test_rebalance_insufficientBalanceForRebalance() public {
     // Setup: Whitelist the mock swap contract
     vm.prank(owner);
     management.proposeWhitelist(address(mockSwap));
@@ -851,7 +851,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     });
 
     vm.prank(manager);
-    vm.expectRevert(KandelManagementRebalancing.InsufficientBalance.selector);
+    vm.expectRevert(KandelManagementRebalancing.InsufficientBalanceForRebalance.selector);
     management.rebalance(params, false);
   }
 
