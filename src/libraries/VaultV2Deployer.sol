@@ -10,7 +10,7 @@ import {MangroveVaultV2} from "../MangroveVaultV2.sol";
  * @author Mangrove
  */
 library VaultV2Deployer {
-  function deployVault(MangroveVaultV2.VaultInitParams memory params) external returns (address vault) {
-    vault = address(new MangroveVaultV2(params));
+  function deployVault(MangroveVaultV2.VaultInitParams memory params) external returns (address payable vault) {
+    vault = payable(address(new MangroveVaultV2(params)));
   }
 }

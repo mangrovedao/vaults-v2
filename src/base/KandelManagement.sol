@@ -247,19 +247,9 @@ contract KandelManagement is OracleRange {
     CoreKandel.Params calldata parameters
   ) external payable onlyManager {
     // Create distribution based on provided parameters
-    DirectWithBidsAndAsksDistribution.Distribution memory distribution = KANDEL.createDistribution(
-      from,
-      to,
-      baseQuoteTickIndex0,
-      _baseQuoteTickOffset,
-      firstAskIndex,
-      bidGives,
-      askGives,
-      parameters.pricePoints,
-      parameters.stepSize
+    DirectWithBidsAndAsksDistribution.Distribution memory distribution = _createDistribution(
+      from, to, baseQuoteTickIndex0, _baseQuoteTickOffset, firstAskIndex, bidGives, askGives, parameters
     );
-    // Validate distribution against oracle constraints
-    if (!_checkDistribution(distribution)) revert InvalidDistribution();
 
     // Set inKandel to true when populating (emit event only if state changes)
     if (!state.inKandel) {
@@ -308,19 +298,9 @@ contract KandelManagement is OracleRange {
     uint256 baseQuoteTickOffset = KANDEL.baseQuoteTickOffset();
 
     // Create distribution with current parameters
-    DirectWithBidsAndAsksDistribution.Distribution memory distribution = KANDEL.createDistribution(
-      from,
-      to,
-      baseQuoteTickIndex0,
-      baseQuoteTickOffset,
-      firstAskIndex,
-      bidGives,
-      askGives,
-      parameters.pricePoints,
-      parameters.stepSize
+    DirectWithBidsAndAsksDistribution.Distribution memory distribution = _createDistribution(
+      from, to, baseQuoteTickIndex0, baseQuoteTickOffset, firstAskIndex, bidGives, askGives, parameters
     );
-    // Validate distribution against oracle constraints
-    if (!_checkDistribution(distribution)) revert InvalidDistribution();
     // Update Kandel chunk with validated distribution
     KANDEL.populateChunk(distribution);
   }
@@ -346,16 +326,17 @@ contract KandelManagement is OracleRange {
     bool withdrawProvisions,
     address payable recipient
   ) external onlyManager {
-    KANDEL.retractOffers(from, to);
+    KANDEL.retractAndWithdraw(
+      from, to, baseAmount, quoteAmount, withdrawProvisions ? type(uint256).max : 0, payable(address(this))
+    );
     if (baseAmount > 0 || quoteAmount > 0) {
-      KANDEL.withdrawFunds(baseAmount, quoteAmount, address(this));
       if (state.inKandel) {
         state.inKandel = false;
         emit FundsExitedKandel();
       }
     }
     if (withdrawProvisions) {
-      KANDEL.withdrawFromMangrove(type(uint256).max, recipient);
+      recipient.call{value: address(this).balance}("");
     }
   }
 
@@ -463,21 +444,55 @@ contract KandelManagement is OracleRange {
   }
 
   /**
-   * @notice Validates a distribution against oracle price constraints
-   * @param distribution The distribution to validate
-   * @return bool True if distribution respects oracle constraints, false otherwise
-   * @dev Checks that the minimum ask tick and minimum bid tick are within oracle deviation
-   * @dev Uses the current active oracle configuration for validation
+   * @notice Creates and validates a Kandel offer distribution with oracle price constraints
+   * @param from The starting index of the price range (inclusive)
+   * @param to The ending index of the price range (exclusive)
+   * @param baseQuoteTickIndex0 The tick index for the base/quote price at index 0
+   * @param _baseQuoteTickOffset The tick offset between consecutive price points
+   * @param firstAskIndex The index where ask offers begin (bids are placed before this index)
+   * @param bidGives The amount of quote tokens each bid offer should give (type(uint256).max = derive from askGives at current price)
+   * @param askGives The amount of base tokens each ask offer should give (type(uint256).max = derive from bidGives at current price)
+   * @param parameters The Kandel parameters containing pricePoints and stepSize
+   * @return distribution The validated distribution containing arrays of bid and ask offers
+   * @dev This function acts as a wrapper around KANDEL.createDistribution() with additional oracle validation
+   * @dev The distribution contains:
+   *      - bids: Array of bid offers (selling quote tokens for base tokens)
+   *      - asks: Array of ask offers (selling base tokens for quote tokens)
+   * @dev Each offer in the distribution includes:
+   *      - index: The position in the Kandel price grid
+   *      - tick: The price tick for this offer
+   *      - gives: The amount of tokens this offer provides (0 = inactive/dead offer)
+   * @dev Oracle validation ensures that:
+   *      - The minimum ask tick is within oracle.maxDeviation of oracle price
+   *      - The minimum bid tick is within oracle.maxDeviation of oracle price
+   *      - This prevents creating distributions with prices too far from market rates
+   * @dev Reverts with InvalidDistribution if the distribution's price range violates oracle constraints
+   * @dev Used internally by populateFromOffset() and populateChunk() to ensure all distributions respect oracle bounds
    */
-  function _checkDistribution(DirectWithBidsAndAsksDistribution.Distribution memory distribution)
-    private
-    view
-    returns (bool)
-  {
-    // Get the current oracle configuration
+  function _createDistribution(
+    uint256 from,
+    uint256 to,
+    Tick baseQuoteTickIndex0,
+    uint256 _baseQuoteTickOffset,
+    uint256 firstAskIndex,
+    uint256 bidGives,
+    uint256 askGives,
+    CoreKandel.Params memory parameters
+  ) internal view returns (DirectWithBidsAndAsksDistribution.Distribution memory distribution) {
+    distribution = KANDEL.createDistribution(
+      from,
+      to,
+      baseQuoteTickIndex0,
+      _baseQuoteTickOffset,
+      firstAskIndex,
+      bidGives,
+      askGives,
+      parameters.pricePoints,
+      parameters.stepSize
+    );
     OracleData memory _oracle = oracle;
-    // Validate that min ask and min bid ticks are within oracle range
-    return _oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids));
+    if (!_oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids))) revert InvalidDistribution();
+    return distribution;
   }
 
   /**
@@ -492,4 +507,6 @@ contract KandelManagement is OracleRange {
     params.stepSize = stepSize;
     params.pricePoints = pricePoints;
   }
+
+  receive() external payable {}
 }

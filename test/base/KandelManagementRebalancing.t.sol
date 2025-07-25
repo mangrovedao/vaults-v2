@@ -766,6 +766,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: 0,
       minAmountOut: 4800e6, // Minimum acceptable output with slippage
       target: address(mockSwap),
       data: swapData
@@ -773,7 +774,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     // Execute rebalance
     vm.prank(manager);
-    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+    (uint256 sent, uint256 received,) = management.rebalance(params);
 
     // Verify results
     assertEq(sent, swapAmount, "Should have sent the correct amount of base tokens");
@@ -820,6 +821,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: false,
       amountIn: swapAmount,
+      amountInKandel: 0,
       minAmountOut: 4.8 ether, // Minimum acceptable output with slippage
       target: address(mockSwap),
       data: swapData
@@ -827,7 +829,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     // Execute rebalance
     vm.prank(manager);
-    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+    (uint256 sent, uint256 received,) = management.rebalance(params);
 
     // Verify results
     assertEq(sent, swapAmount, "Should have sent the correct amount of quote tokens");
@@ -844,6 +846,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: 1 ether,
+      amountInKandel: 0,
       minAmountOut: 900e6,
       target: nonWhitelistedTarget,
       data: ""
@@ -851,7 +854,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     vm.prank(manager);
     vm.expectRevert(KandelManagementRebalancing.InvalidRebalanceAddress.selector);
-    management.rebalance(params, false);
+    management.rebalance(params);
   }
 
   function test_rebalance_insufficientBalanceForRebalance() public {
@@ -869,6 +872,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: 1 ether,
+      amountInKandel: 0,
       minAmountOut: 900e6,
       target: address(mockSwap),
       data: swapData
@@ -876,7 +880,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     vm.prank(manager);
     vm.expectRevert(KandelManagementRebalancing.InsufficientBalanceForRebalance.selector);
-    management.rebalance(params, false);
+    management.rebalance(params);
   }
 
   function test_rebalance_swapContractReverts() public {
@@ -899,6 +903,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: 1 ether,
+      amountInKandel: 0,
       minAmountOut: 900e6,
       target: address(mockSwap),
       data: swapData
@@ -906,7 +911,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     vm.prank(manager);
     vm.expectRevert("MockSwapContract: should revert");
-    management.rebalance(params, false);
+    management.rebalance(params);
   }
 
   function test_rebalance_withKandelFunds() public {
@@ -956,6 +961,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: swapAmount, // Withdraw the amount needed from Kandel
       minAmountOut: 2900e6,
       target: address(mockSwap),
       data: swapData
@@ -963,7 +969,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     // Execute rebalance (should withdraw from Kandel)
     vm.prank(manager);
-    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+    (uint256 sent, uint256 received,) = management.rebalance(params);
 
     // Verify swap occurred
     assertEq(sent, swapAmount, "Should have sent the correct amount");
@@ -1008,6 +1014,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: 0,
       minAmountOut: 0, // No minimum to ensure swap executes
       target: address(mockSwap),
       data: swapData
@@ -1015,7 +1022,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     vm.prank(manager);
     vm.expectRevert(KandelManagementRebalancing.InvalidTradeTick.selector);
-    management.rebalance(params, false);
+    management.rebalance(params);
   }
 
   function test_rebalance_withdrawAll() public {
@@ -1064,14 +1071,15 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: type(uint256).max, // Withdraw all available funds from Kandel
       minAmountOut: 950e6,
       target: address(mockSwap),
       data: swapData
     });
 
-    // Execute rebalance with withdrawAll = true
+    // Execute rebalance with withdrawAll behavior (using max amount)
     vm.prank(manager);
-    (uint256 sent, uint256 received,) = management.rebalance(params, true);
+    (uint256 sent, uint256 received,) = management.rebalance(params);
 
     // Verify swap occurred correctly
     assertEq(sent, swapAmount, "Should have sent the correct amount");
@@ -1127,6 +1135,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: type(uint256).max, // withdraw all from kandel
       minAmountOut: 1900e6,
       target: address(mockSwap),
       data: swapData
@@ -1138,7 +1147,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     // Execute rebalance
     vm.prank(manager);
-    management.rebalance(params, false);
+    management.rebalance(params);
 
     // Verify remaining tokens were deposited to Kandel
     (uint256 vaultBaseAfter, uint256 vaultQuoteAfter) = management.vaultBalances();
@@ -1187,6 +1196,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: swapAmount,
+      amountInKandel: 0,
       minAmountOut: 4800e6,
       target: address(mockSwap),
       data: swapData
@@ -1194,7 +1204,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
 
     // Execute rebalance
     vm.prank(manager);
-    management.rebalance(params, false);
+    management.rebalance(params);
 
     // Verify that token approval was cleared after the swap
     assertEq(WETH.allowance(address(management), address(mockSwap)), 0, "WETH approval should be cleared");
@@ -1231,6 +1241,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     KandelManagementRebalancing.RebalanceParams memory params = KandelManagementRebalancing.RebalanceParams({
       isSell: true,
       amountIn: 1 ether,
+      amountInKandel: 0,
       minAmountOut: 950e6,
       target: address(mockSwap),
       data: swapData
@@ -1240,16 +1251,16 @@ contract KandelManagementRebalancingTest is MangroveTest {
     address nonManager = makeAddr("nonManager");
     vm.prank(nonManager);
     vm.expectRevert(); // Should revert due to onlyManager modifier
-    management.rebalance(params, false);
+    management.rebalance(params);
 
     // Test that owner cannot call rebalance (only manager can)
     vm.prank(owner);
     vm.expectRevert(); // Should revert due to onlyManager modifier
-    management.rebalance(params, false);
+    management.rebalance(params);
 
     // Test that manager can call rebalance
     vm.prank(manager);
-    (uint256 sent, uint256 received,) = management.rebalance(params, false);
+    (uint256 sent, uint256 received,) = management.rebalance(params);
 
     assertEq(sent, 1 ether, "Manager should be able to execute rebalance");
     assertEq(received, 1000e6, "Manager should be able to execute rebalance");

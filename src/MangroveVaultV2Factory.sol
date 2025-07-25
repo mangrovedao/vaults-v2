@@ -51,7 +51,7 @@ contract MangroveVaultV2Factory {
    *      registers it in the factory's tracking system, and emits a VaultDeployed event
    *      containing the vault address and the complete initialization parameters struct.
    */
-  function deployVault(MangroveVaultV2.VaultInitParams memory params) external returns (address vault) {
+  function deployVault(MangroveVaultV2.VaultInitParams memory params) external returns (address payable vault) {
     // Deploy the new vault
     vault = VaultV2Deployer.deployVault(params);
 

@@ -119,6 +119,8 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @notice Parameters for rebalancing operations
    * @param isSell True if selling base token for quote token, false if buying base token with quote token
    * @param amountIn The amount of tokens to send for the swap
+   * @param amountInKandel The amount of tokens to withdraw from the Kandel balance
+   * @param amountOut The amount of tokens expected to receive from the swap
    * @param minAmountOut The minimum amount of tokens expected to receive (slippage protection)
    * @param target The whitelisted contract address to perform the swap
    * @param data The call data to send to the target contract for the swap
@@ -126,37 +128,10 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   struct RebalanceParams {
     bool isSell;
     uint256 amountIn;
+    uint256 amountInKandel;
     uint256 minAmountOut;
     address target;
     bytes data;
-  }
-
-  /**
-   * @notice Prepares tokens for rebalancing by withdrawing from Kandel if needed and approving target
-   * @param isSell True if selling base token (using quote), false if buying base token
-   * @param withdrawAll Whether to withdraw all available tokens from Kandel or just the needed amount
-   * @param _amount The amount of tokens needed for the operation
-   * @param _target The target contract address to approve for spending the tokens
-   * @return localBalance The final balance of tokens available in the vault after preparation
-   * @dev Withdraws tokens from Kandel strategy if vault balance is insufficient
-   * @dev Reverts with InsufficientBalance if even after withdrawal there are not enough tokens
-   */
-  function _prepareToken(bool isSell, bool withdrawAll, uint256 _amount, address _target)
-    internal
-    returns (uint256 localBalance)
-  {
-    address _token = isSell ? BASE : QUOTE;
-    localBalance = _token.balanceOf(address(this));
-    if (localBalance < _amount) {
-      uint256 amount = withdrawAll ? type(uint256).max : _amount - localBalance;
-      try KANDEL.withdrawFunds(isSell ? amount : 0, isSell ? 0 : amount, address(this)) {}
-      catch {
-        revert InsufficientBalanceForRebalance();
-      }
-      localBalance = _token.balanceOf(address(this));
-    }
-    if (localBalance < _amount) revert InsufficientBalanceForRebalance();
-    _token.safeApprove(_target, _amount);
   }
 
   /**
@@ -185,7 +160,6 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   /**
    * @notice Performs a rebalancing operation by swapping tokens through a whitelisted target
    * @param _params The rebalancing parameters including swap direction, amounts, and target
-   * @param withdrawAll Whether to withdraw all available tokens from Kandel or just the needed amount
    * @return sent The actual amount of tokens sent in the swap
    * @return received The actual amount of tokens received from the swap
    * @return callResult The return data from the target contract call
@@ -197,7 +171,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @dev Reverts with InvalidTradeTick if the trade price is outside oracle range
    * @dev Reverts with InsufficientBalanceForRebalance if there are not enough tokens available
    */
-  function rebalance(RebalanceParams memory _params, bool withdrawAll)
+  function rebalance(RebalanceParams memory _params)
     external
     payable
     onlyManager
@@ -205,34 +179,40 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     returns (uint256 sent, uint256 received, bytes memory callResult)
   {
     if (!isWhitelisted[_params.target]) revert InvalidRebalanceAddress();
-    // take all tokens to the vault (if needed) and give allowance to the target
-    // this also takes a balance snapshot of the token
-    uint256 localBalance = _prepareToken(_params.isSell, withdrawAll, _params.amountIn, _params.target);
-    // take a balance snapshot of the token we receive
-    uint256 receiveTokenBalance = _params.isSell ? QUOTE.balanceOf(address(this)) : BASE.balanceOf(address(this));
+    // take the tokens from the kandel
+    KANDEL.withdrawFunds(
+      _params.isSell ? _params.amountInKandel : 0, _params.isSell ? 0 : _params.amountInKandel, address(this)
+    );
+
+    address sellToken = _params.isSell ? BASE : QUOTE;
+    address buyToken = _params.isSell ? QUOTE : BASE;
+
+    // take a snapshot of the balances
+    uint sellBalance = sellToken.balanceOf(address(this));
+    received = buyToken.balanceOf(address(this));
+
+    // check if we have enough balance for the swap
+    if (sellBalance < _params.amountIn) revert InsufficientBalanceForRebalance();
+
+    // give allowance of the funds to the target
+    sellToken.safeApprove(_params.target, _params.amountIn);
 
     // call the target contract
     callResult = _params.target.callContract(msg.value, _params.data);
 
     // get the amount of token we sent (if underflow, it means we received which is not expected)
-    sent = _params.isSell ? localBalance - BASE.balanceOf(address(this)) : localBalance - QUOTE.balanceOf(address(this));
-    // get the amount of token we received (if underflow, it means we sent which is not expected)
-    received = _params.isSell
-      ? QUOTE.balanceOf(address(this)) - receiveTokenBalance
-      : BASE.balanceOf(address(this)) - receiveTokenBalance;
+    uint finalSentBalance = sellToken.balanceOf(address(this));
+    received = buyToken.balanceOf(address(this)) - received;
 
-    if (sent > 0) {
+    if (finalSentBalance < sellBalance) {
+      sent = sellBalance - finalSentBalance;
       if (!oracle.acceptsTrade(_params.isSell, received, sent)) revert InvalidTradeTick();
     }
 
     // remove allowance
-    if (_params.isSell) {
-      QUOTE.safeApprove(_params.target, 0);
-    } else {
-      BASE.safeApprove(_params.target, 0);
-    }
+    sellToken.safeApprove(_params.target, 0);
 
-    // send token to the kandel if needed
+    // send the tokens to the kandel if needed
     if (state.inKandel) _sendTokenToKandel();
   }
 

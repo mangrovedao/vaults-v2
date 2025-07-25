@@ -54,7 +54,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
   function test_deployVault_basic() public {
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
 
-    address deployedVault = factory.deployVault(params);
+    address payable deployedVault = factory.deployVault(params);
 
     // Verify vault was deployed
     assertNotEq(deployedVault, address(0));
@@ -80,8 +80,8 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     params2.symbol = "V2";
     params2.manager = makeAddr("manager2");
 
-    address vault1 = factory.deployVault(params1);
-    address vault2 = factory.deployVault(params2);
+    address payable vault1 = factory.deployVault(params1);
+    address payable vault2 = factory.deployVault(params2);
 
     // Verify both vaults are tracked
     assertEq(factory.getDeployedVaultCount(), 2);
@@ -124,11 +124,11 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
   function test_getAllDeployedVaults_multiple() public {
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
 
-    address vault1 = factory.deployVault(params);
+    address payable vault1 = factory.deployVault(params);
     params.name = "Vault 2";
-    address vault2 = factory.deployVault(params);
+    address payable vault2 = factory.deployVault(params);
     params.name = "Vault 3";
-    address vault3 = factory.deployVault(params);
+    address payable vault3 = factory.deployVault(params);
 
     address[] memory vaults = factory.getAllDeployedVaults();
 
@@ -157,8 +157,8 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     params2.name = "Vault 2";
     params2.symbol = "V2";
 
-    address vault1Address = factory.deployVault(params1);
-    address vault2Address = factory.deployVault(params2);
+    address payable vault1Address = factory.deployVault(params1);
+    address payable vault2Address = factory.deployVault(params2);
 
     MangroveVaultV2 vault1 = MangroveVaultV2(vault1Address);
     MangroveVaultV2 vault2 = MangroveVaultV2(vault2Address);
@@ -181,7 +181,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
     params.managementFee = 0;
 
-    address vaultAddress = factory.deployVault(params);
+    address payable vaultAddress = factory.deployVault(params);
 
     assertTrue(factory.isDeployedVault(vaultAddress));
     MangroveVaultV2 vault = MangroveVaultV2(vaultAddress);
@@ -200,7 +200,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
     params.managementFee = managementFee;
 
-    address vaultAddress = factory.deployVault(params);
+    address payable vaultAddress = factory.deployVault(params);
 
     assertTrue(factory.isDeployedVault(vaultAddress));
     MangroveVaultV2 vault = MangroveVaultV2(vaultAddress);
@@ -215,7 +215,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
     params.quoteOffsetDecimals = quoteOffsetDecimals;
 
-    address vaultAddress = factory.deployVault(params);
+    address payable vaultAddress = factory.deployVault(params);
 
     assertTrue(factory.isDeployedVault(vaultAddress));
     MangroveVaultV2 vault = MangroveVaultV2(vaultAddress);
