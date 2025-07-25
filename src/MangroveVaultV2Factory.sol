@@ -53,7 +53,7 @@ contract MangroveVaultV2Factory {
    */
   function deployVault(MangroveVaultV2.VaultInitParams memory params) external returns (address payable vault) {
     // Deploy the new vault
-    vault = VaultV2Deployer.deployVault(params);
+    vault = _deployVault(params);
 
     // Register the vault in our tracking system
     _deployedVaults.add(vault);
@@ -102,5 +102,13 @@ contract MangroveVaultV2Factory {
    */
   function isDeployedVault(address vault) external view returns (bool isDeployed) {
     return _deployedVaults.contains(vault);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                        INTERNAL FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  function _deployVault(MangroveVaultV2.VaultInitParams memory params) internal virtual returns (address payable vault) {
+    vault = VaultV2Deployer.deployVault(params);
   }
 }
