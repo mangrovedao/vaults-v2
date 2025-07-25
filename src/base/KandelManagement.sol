@@ -508,5 +508,9 @@ contract KandelManagement is OracleRange {
     params.pricePoints = pricePoints;
   }
 
+  /**
+   * @notice Receives ETH from Mangrove provisions
+   * @dev This function is used to receive ETH from Mangrove provisions
+   */
   receive() external payable {}
 }

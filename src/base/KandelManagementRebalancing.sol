@@ -188,7 +188,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     address buyToken = _params.isSell ? QUOTE : BASE;
 
     // take a snapshot of the balances
-    uint sellBalance = sellToken.balanceOf(address(this));
+    uint256 sellBalance = sellToken.balanceOf(address(this));
     received = buyToken.balanceOf(address(this));
 
     // check if we have enough balance for the swap
@@ -201,7 +201,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     callResult = _params.target.callContract(msg.value, _params.data);
 
     // get the amount of token we sent (if underflow, it means we received which is not expected)
-    uint finalSentBalance = sellToken.balanceOf(address(this));
+    uint256 finalSentBalance = sellToken.balanceOf(address(this));
     received = buyToken.balanceOf(address(this)) - received;
 
     if (finalSentBalance < sellBalance) {

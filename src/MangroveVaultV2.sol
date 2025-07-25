@@ -361,12 +361,15 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    *      the Kandel strategy before sending. The actual sent amount may be less than requested
    *      if there are insufficient total funds available.
    */
-  function _sendTokensTo(uint256 baseAmount, uint256 quoteAmount, address to) internal returns (uint256 sentBase, uint256 sentQuote) {
+  function _sendTokensTo(uint256 baseAmount, uint256 quoteAmount, address to)
+    internal
+    returns (uint256 sentBase, uint256 sentQuote)
+  {
     uint256 localBaseBalance = BASE.balanceOf(address(this));
     uint256 localQuoteBalance = QUOTE.balanceOf(address(this));
-    
-    uint baseToWithdraw = baseAmount > localBaseBalance ? baseAmount - localBaseBalance : 0;
-    uint quoteToWithdraw = quoteAmount > localQuoteBalance ? quoteAmount - localQuoteBalance : 0;
+
+    uint256 baseToWithdraw = baseAmount > localBaseBalance ? baseAmount - localBaseBalance : 0;
+    uint256 quoteToWithdraw = quoteAmount > localQuoteBalance ? quoteAmount - localQuoteBalance : 0;
 
     if (baseToWithdraw > 0 || quoteToWithdraw > 0) {
       KANDEL.withdrawFunds(baseToWithdraw, quoteToWithdraw, address(this));
