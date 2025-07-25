@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {MangroveVaultV2, ERC20, OracleData, OracleLib} from "../src/MangroveVaultV2.sol";
+import {KandelManagement} from "../src/base/KandelManagement.sol";
 import {MangroveTest, MockERC20} from "./base/MangroveTest.t.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {TickLib, Tick} from "@mgv/lib/core/TickLib.sol";
@@ -466,6 +467,426 @@ contract MangroveVaultV2Test is MangroveTest {
 
     vm.prank(user2);
     vault.mint(user2, baseAmount, quoteAmount, 0);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         SET FEE DATA TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_setFeeData_accruesFeesFirst() public {
+    // Initial mint to create shares
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Fast forward time to accrue fees
+    vm.warp(block.timestamp + 365 days);
+
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 newManagementFee = 1000; // 10%
+
+    // Get pending fees before calling setFeeData
+    (,, uint256 pendingFeeShares) = vault.feeData();
+    assertGt(pendingFeeShares, 0);
+
+    uint256 ownerBalanceBefore = vault.balanceOf(owner);
+
+    // Expect AccruedFees event to be emitted first
+    vm.expectEmit(true, true, false, true);
+    emit MangroveVaultV2.AccruedFees(pendingFeeShares);
+
+    // Then expect SetFeeData event
+    vm.expectEmit(true, true, false, true);
+    emit KandelManagement.SetFeeData(newFeeRecipient, newManagementFee);
+
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+
+    // Verify old fee recipient received the accrued fees
+    uint256 ownerBalanceAfter = vault.balanceOf(owner);
+    assertEq(ownerBalanceAfter, ownerBalanceBefore + pendingFeeShares);
+
+    // Verify fee data was updated
+    (uint256 managementFee, address feeRecipient_, uint256 newPendingFeeShares) = vault.feeData();
+    assertEq(managementFee, newManagementFee);
+    assertEq(feeRecipient_, newFeeRecipient);
+    assertEq(newPendingFeeShares, 0); // Should be 0 since we just updated
+  }
+
+  function test_setFeeData_noFeesAccrued() public {
+    // Initial mint
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 newManagementFee = 1000; // 10%
+
+    // No time passed, so no fees should be accrued
+    (,, uint256 pendingFeeShares) = vault.feeData();
+    assertEq(pendingFeeShares, 0);
+
+    uint256 ownerBalanceBefore = vault.balanceOf(owner);
+
+    // Should only emit SetFeeData event (no AccruedFees event)
+    vm.expectEmit(true, true, false, true);
+    emit KandelManagement.SetFeeData(newFeeRecipient, newManagementFee);
+
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+
+    // Owner balance should be unchanged
+    uint256 ownerBalanceAfter = vault.balanceOf(owner);
+    assertEq(ownerBalanceAfter, ownerBalanceBefore);
+
+    // Verify fee data was updated
+    (uint256 managementFee, address feeRecipient_,) = vault.feeData();
+    assertEq(managementFee, newManagementFee);
+    assertEq(feeRecipient_, newFeeRecipient);
+  }
+
+  function test_setFeeData_onlyOwner() public {
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 newManagementFee = 1000;
+
+    // Should revert when called by non-owner
+    vm.prank(user1);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+
+    vm.prank(manager);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+
+    vm.prank(guardian);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+
+    // Should succeed when called by owner
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, newManagementFee);
+  }
+
+  function test_setFeeData_maxFeeValidation() public {
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 invalidManagementFee = 10001; // 100.01% - exceeds max
+
+    vm.prank(owner);
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    vault.setFeeData(newFeeRecipient, invalidManagementFee);
+
+    // Should succeed with valid fee
+    uint16 validManagementFee = 10000; // 100% - at the maximum
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, validManagementFee);
+  }
+
+  function test_setFeeData_changeFeeRecipientWithAccruedFees() public {
+    // Initial mint
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Fast forward time to accrue fees
+    vm.warp(block.timestamp + 365 days);
+
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 sameManagementFee = MANAGEMENT_FEE; // Keep same fee, just change recipient
+
+    // Get pending fees before calling setFeeData
+    (,, uint256 pendingFeeShares) = vault.feeData();
+    assertGt(pendingFeeShares, 0);
+
+    uint256 ownerBalanceBefore = vault.balanceOf(owner);
+    uint256 newRecipientBalanceBefore = vault.balanceOf(newFeeRecipient);
+
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, sameManagementFee);
+
+    // Old fee recipient (owner) should have received the accrued fees
+    uint256 ownerBalanceAfter = vault.balanceOf(owner);
+    assertEq(ownerBalanceAfter, ownerBalanceBefore + pendingFeeShares);
+
+    // New fee recipient should still have their original balance (no fees yet)
+    uint256 newRecipientBalanceAfter = vault.balanceOf(newFeeRecipient);
+    assertEq(newRecipientBalanceAfter, newRecipientBalanceBefore);
+
+    // Future fees should go to new recipient
+    vm.warp(block.timestamp + 365 days);
+    (,, uint256 newPendingFeeShares) = vault.feeData();
+    assertGt(newPendingFeeShares, 0);
+
+    // Trigger fee accrual by calling mint
+    vm.prank(user2);
+    vault.mint(user2, 0.1 ether, 200e6, 0);
+
+    // New fee recipient should now have the newly accrued fees
+    uint256 finalNewRecipientBalance = vault.balanceOf(newFeeRecipient);
+    assertGt(finalNewRecipientBalance, newRecipientBalanceBefore);
+  }
+
+  function test_setFeeData_changeManagementFeeWithAccruedFees() public {
+    // Initial mint
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Fast forward time to accrue fees at old rate
+    vm.warp(block.timestamp + 365 days);
+
+    uint16 newManagementFee = 1000; // 10% (different from initial 5%)
+
+    // Get pending fees at old rate
+    (,, uint256 pendingFeesAtOldRate) = vault.feeData();
+    assertGt(pendingFeesAtOldRate, 0);
+
+    uint256 ownerBalanceBefore = vault.balanceOf(owner);
+
+    vm.prank(owner);
+    vault.setFeeData(owner, newManagementFee); // Keep same recipient, change rate
+
+    // Owner should have received fees calculated at old rate
+    uint256 ownerBalanceAfter = vault.balanceOf(owner);
+    assertEq(ownerBalanceAfter, ownerBalanceBefore + pendingFeesAtOldRate);
+
+    // Fast forward another year at new rate
+    vm.warp(block.timestamp + 365 days);
+
+    (,, uint256 pendingFeesAtNewRate) = vault.feeData();
+    assertGt(pendingFeesAtNewRate, 0);
+
+    // New fees should be calculated at the new rate (10% vs 5%)
+    // So approximately double the rate (though not exactly due to compound effects)
+    uint256 supply = vault.totalSupply();
+    uint256 expectedNewFees =
+      supply.fullMulDiv(uint256(newManagementFee) * uint256(365 days), uint256(1e5) * uint256(365 days));
+
+    // Allow for small differences due to rounding and timing
+    assertApproxEqRel(pendingFeesAtNewRate, expectedNewFees, 1e15); // 0.1% tolerance
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         PAUSABLE TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_pausable_initialState() public view {
+    // Vault should start in unpaused state
+    // We can infer this by checking that mint/burn work initially
+    // There's no public getter for paused state, so we test behavior
+  }
+
+  function test_setPaused_onlyOwner() public {
+    // Should revert when called by non-owner
+    vm.prank(user1);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setPaused(true);
+
+    vm.prank(manager);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setPaused(true);
+
+    vm.prank(guardian);
+    vm.expectRevert(); // Ownable.Unauthorized selector would be more specific
+    vault.setPaused(true);
+
+    // Should succeed when called by owner
+    vm.prank(owner);
+    vault.setPaused(true);
+  }
+
+  function test_setPaused_emitsEvent() public {
+    // Expect SetPaused event with true
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.SetPaused(true);
+
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // Expect SetPaused event with false
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.SetPaused(false);
+
+    vm.prank(owner);
+    vault.setPaused(false);
+  }
+
+  function test_setPaused_revertsSameState() public {
+    // Should revert when trying to set to same state (initially false)
+    vm.prank(owner);
+    vm.expectRevert(MangroveVaultV2.PausedStateNotChanged.selector);
+    vault.setPaused(false);
+
+    // Pause the vault first
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // Should revert when trying to pause again
+    vm.prank(owner);
+    vm.expectRevert(MangroveVaultV2.PausedStateNotChanged.selector);
+    vault.setPaused(true);
+
+    // Unpause the vault
+    vm.prank(owner);
+    vault.setPaused(false);
+
+    // Should revert when trying to unpause again
+    vm.prank(owner);
+    vm.expectRevert(MangroveVaultV2.PausedStateNotChanged.selector);
+    vault.setPaused(false);
+  }
+
+  function test_mint_whenPaused() public {
+    // Pause the vault
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // Mint should revert when paused
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+  }
+
+  function test_burn_whenPaused() public {
+    // First mint some shares when unpaused
+    vm.prank(user1);
+    (uint256 shares,,) = vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Pause the vault
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // Burn should revert when paused
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.burn(user1, user1, shares, 0, 0);
+  }
+
+  function test_cannotChnageToSameState() public {
+    vm.prank(owner);
+    vm.expectRevert(MangroveVaultV2.PausedStateNotChanged.selector);
+    vault.setPaused(false);
+  }
+
+  function test_burn_whenUnpaused() public {
+    // First mint some shares
+    vm.prank(user1);
+    (uint256 shares,,) = vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Burn should succeed when unpaused
+    vm.prank(user1);
+    (uint256 baseOut, uint256 quoteOut) = vault.burn(user1, user1, shares / 2, 0, 0);
+
+    assertGt(baseOut, 0);
+    assertGt(quoteOut, 0);
+  }
+
+  function test_pausable_workflow() public {
+    // Initial state: should be able to mint
+    vm.prank(user1);
+    (uint256 shares1,,) = vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Pause the vault
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.SetPaused(true);
+
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // Should not be able to mint when paused
+    vm.prank(user2);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.mint(user2, 0.5 ether, 1000e6, 0);
+
+    // Should not be able to burn when paused
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.burn(user1, user1, shares1 / 2, 0, 0);
+
+    // Unpause the vault
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.SetPaused(false);
+
+    vm.prank(owner);
+    vault.setPaused(false);
+
+    // Should be able to mint again
+    vm.prank(user2);
+    (uint256 shares2,,) = vault.mint(user2, 0.5 ether, 1000e6, 0);
+    assertGt(shares2, 0);
+
+    // Should be able to burn again
+    vm.prank(user1);
+    (uint256 baseOut, uint256 quoteOut) = vault.burn(user1, user1, shares1 / 2, 0, 0);
+    assertGt(baseOut, 0);
+    assertGt(quoteOut, 0);
+  }
+
+  function test_pausable_doesNotAffectOtherFunctions() public {
+    // Setup: mint some shares first
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    // Pause the vault
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // View functions should still work when paused
+    (uint256 managementFee, address feeRecipient_, uint256 pendingFeeShares) = vault.feeData();
+    assertEq(managementFee, MANAGEMENT_FEE);
+    assertEq(feeRecipient_, owner);
+
+    // getMintAmounts should still work when paused (it's a view function)
+    (uint256 sharesOut, uint256 baseIn, uint256 quoteIn) = vault.getMintAmounts(0.5 ether, 1000e6);
+    assertGt(sharesOut, 0);
+    assertEq(baseIn, 0.5 ether);
+    assertEq(quoteIn, 1000e6);
+
+    // totalBalances should still work when paused
+    (uint256 baseBalance, uint256 quoteBalance) = vault.totalBalances();
+    assertGt(baseBalance, 0);
+    assertGt(quoteBalance, 0);
+
+    // Owner functions should still work when paused
+    address newFeeRecipient = makeAddr("newFeeRecipient");
+    vm.prank(owner);
+    vault.setFeeData(newFeeRecipient, MANAGEMENT_FEE);
+
+    // Check the change took effect
+    (, address updatedFeeRecipient,) = vault.feeData();
+    assertEq(updatedFeeRecipient, newFeeRecipient);
+  }
+
+  function test_pausable_emergencyScenario() public {
+    // Simulate emergency scenario where vault needs to be paused immediately
+    vm.prank(user1);
+    vault.mint(user1, 1 ether, 2000e6, 0);
+
+    vm.prank(user2);
+    vault.mint(user2, 0.5 ether, 1000e6, 0);
+
+    // Emergency: pause the vault
+    vm.prank(owner);
+    vault.setPaused(true);
+
+    // No users should be able to mint or burn during emergency
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.mint(user1, 0.1 ether, 200e6, 0);
+
+    uint256 balance = vault.balanceOf(user2);
+
+    vm.prank(user2);
+    vm.expectRevert(MangroveVaultV2.Paused.selector);
+    vault.burn(user2, user2, balance, 0, 0);
+
+    // After emergency is resolved, resume operations
+    vm.prank(owner);
+    vault.setPaused(false);
+
+    // Operations should resume normally
+    vm.prank(user1);
+    vault.mint(user1, 0.1 ether, 200e6, 0);
+
+    balance = vault.balanceOf(user2);
+
+    vm.prank(user2);
+    vault.burn(user2, user2, balance / 2, 0, 0);
   }
 
   /*//////////////////////////////////////////////////////////////

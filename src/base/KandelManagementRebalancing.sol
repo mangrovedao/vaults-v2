@@ -148,16 +148,10 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     address _token = isSell ? BASE : QUOTE;
     localBalance = _token.balanceOf(address(this));
     if (localBalance < _amount) {
-      if (isSell) {
-        try KANDEL.withdrawFunds(withdrawAll ? type(uint256).max : _amount - localBalance, 0, address(this)) {}
-        catch {
-          revert InsufficientBalanceForRebalance();
-        }
-      } else {
-        try KANDEL.withdrawFunds(0, withdrawAll ? type(uint256).max : _amount - localBalance, address(this)) {}
-        catch {
-          revert InsufficientBalanceForRebalance();
-        }
+      uint256 amount = withdrawAll ? type(uint256).max : _amount - localBalance;
+      try KANDEL.withdrawFunds(isSell ? amount : 0, isSell ? 0 : amount, address(this)) {}
+      catch {
+        revert InsufficientBalanceForRebalance();
       }
       localBalance = _token.balanceOf(address(this));
     }

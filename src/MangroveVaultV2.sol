@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // External dependencies (Mangrove strategies)
-import {KandelManagementRebalancing} from "./base/KandelManagementRebalancing.sol";
+import {KandelManagementRebalancing, KandelManagement} from "./base/KandelManagementRebalancing.sol";
 import {AbstractKandelSeeder} from
   "@mgv-strats/src/strategies/offer_maker/market_making/kandel/abstract/AbstractKandelSeeder.sol";
 
@@ -44,6 +44,12 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
   /// @notice Thrown when the burn operation would result in less tokens than the minimum required
   error BurnSlippageExceeded();
 
+  /// @notice Thrown when the paused state is not changed
+  error PausedStateNotChanged();
+
+  /// @notice Thrown when the vault is paused
+  error Paused();
+
   /*//////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
@@ -71,6 +77,12 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    * @param totalQuoteBalance The total quote token balance after sending tokens
    */
   event SentTokens(uint256 baseOut, uint256 quoteOut, uint256 totalBaseBalance, uint256 totalQuoteBalance);
+
+  /**
+   * @notice Emitted when the paused state is changed
+   * @param paused The new paused state
+   */
+  event SetPaused(bool paused);
 
   /*//////////////////////////////////////////////////////////////
                            CONSTANTS
@@ -208,11 +220,10 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
       if (!oracle.acceptsInitialMint(baseIn + baseBalance, quoteIn + quoteBalance)) revert InvalidInitialMintAmounts();
       sharesOut = (quoteIn + quoteBalance) * QUOTE_OFFSET;
     } else {
-      uint256 sharesFromBase = baseAmountMax.fullMulDiv(supply, baseBalance);
-      uint256 sharesFromQuote = quoteAmountMax.fullMulDiv(supply, quoteBalance);
-      sharesOut = FixedPointMathLib.min(sharesFromBase, sharesFromQuote);
-      baseIn = sharesOut.fullMulDiv(baseBalance, supply);
-      quoteIn = sharesOut.fullMulDiv(quoteBalance, supply);
+      sharesOut =
+        FixedPointMathLib.min(baseAmountMax.mulDiv(supply, baseBalance), quoteAmountMax.mulDiv(supply, quoteBalance));
+      baseIn = sharesOut.mulDiv(baseBalance, supply);
+      quoteIn = sharesOut.mulDiv(quoteBalance, supply);
     }
   }
 
@@ -250,6 +261,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     nonReentrant
     returns (uint256 sharesOut, uint256 baseIn, uint256 quoteIn)
   {
+    _checkPaused();
     (sharesOut, baseIn, quoteIn) = getMintAmounts(baseAmountMax, quoteAmountMax);
     if (sharesOut < minSharesOut) revert InsufficientSharesOut();
     _accrueFees();
@@ -262,6 +274,8 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     }
 
     _mint(to, sharesOut);
+
+    if (state.inKandel) _sendTokenToKandel();
 
     // Emit received tokens event with current balances
     (uint256 totalBaseBalance, uint256 totalQuoteBalance) = totalBalances();
@@ -287,6 +301,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     nonReentrant
     returns (uint256 baseOut, uint256 quoteOut)
   {
+    _checkPaused();
     _accrueFees();
     if (from != msg.sender) {
       _spendAllowance(from, msg.sender, shares);
@@ -295,16 +310,40 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     uint256 supply = totalSupply();
     (uint256 baseBalance, uint256 quoteBalance) = totalBalances();
 
-    baseOut = shares.fullMulDiv(baseBalance, supply);
-    quoteOut = shares.fullMulDiv(quoteBalance, supply);
+    baseOut = shares.mulDiv(baseBalance, supply);
+    quoteOut = shares.mulDiv(quoteBalance, supply);
     if (baseOut < minBaseOut) revert BurnSlippageExceeded();
     if (quoteOut < minQuoteOut) revert BurnSlippageExceeded();
     _burn(from, shares);
-    baseOut = _sendTokensTo(BASE, receiver, baseOut);
-    quoteOut = _sendTokensTo(QUOTE, receiver, quoteOut);
+    (baseOut, quoteOut) = _sendTokensTo(baseOut, quoteOut, receiver);
 
     // Emit sent tokens event with current balances
     emit SentTokens(baseOut, quoteOut, baseBalance - baseOut, quoteBalance - quoteOut);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      MANAGEMENT FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @inheritdoc KandelManagement
+   * @dev Overrides the parent implementation to ensure fees are properly accrued before changes
+   */
+  function setFeeData(address _feeRecipient, uint16 _managementFee) public override onlyOwner {
+    _accrueFees();
+    super.setFeeData(_feeRecipient, _managementFee);
+  }
+
+  /**
+   * @notice Sets the paused state of the vault
+   * @param _paused The new paused state
+   * @dev Only the owner can set the paused state
+   */
+  function setPaused(bool _paused) public onlyOwner {
+    bool paused = state.paused;
+    if (paused == _paused) revert PausedStateNotChanged();
+    state.paused = _paused;
+    emit SetPaused(_paused);
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -313,26 +352,32 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
 
   /**
    * @notice Internal function to send tokens to a recipient, withdrawing from Kandel if necessary
-   * @param token The address of the token to send
+   * @param baseAmount The amount of base tokens to send
+   * @param quoteAmount The amount of quote tokens to send
    * @param to The recipient address
-   * @param amount The amount of tokens to send
-   * @return sent The actual amount of tokens sent (may be less than requested if insufficient balance)
+   * @return sentBase The actual amount of base tokens sent (may be less than requested if insufficient balance)
+   * @return sentQuote The actual amount of quote tokens sent (may be less than requested if insufficient balance)
    * @dev If the local balance is insufficient, this function will attempt to withdraw funds from
    *      the Kandel strategy before sending. The actual sent amount may be less than requested
    *      if there are insufficient total funds available.
    */
-  function _sendTokensTo(address token, address to, uint256 amount) internal returns (uint256 sent) {
-    uint256 localBalance = token.balanceOf(address(this));
-    if (localBalance < amount) {
-      if (token == BASE) {
-        KANDEL.withdrawFunds(amount - localBalance, 0, address(this));
-      } else {
-        KANDEL.withdrawFunds(0, amount - localBalance, address(this));
-      }
-      localBalance = token.balanceOf(address(this));
+  function _sendTokensTo(uint256 baseAmount, uint256 quoteAmount, address to) internal returns (uint256 sentBase, uint256 sentQuote) {
+    uint256 localBaseBalance = BASE.balanceOf(address(this));
+    uint256 localQuoteBalance = QUOTE.balanceOf(address(this));
+    
+    uint baseToWithdraw = baseAmount > localBaseBalance ? baseAmount - localBaseBalance : 0;
+    uint quoteToWithdraw = quoteAmount > localQuoteBalance ? quoteAmount - localQuoteBalance : 0;
+
+    if (baseToWithdraw > 0 || quoteToWithdraw > 0) {
+      KANDEL.withdrawFunds(baseToWithdraw, quoteToWithdraw, address(this));
+      localBaseBalance = BASE.balanceOf(address(this));
+      localQuoteBalance = QUOTE.balanceOf(address(this));
     }
-    sent = FixedPointMathLib.min(amount, localBalance);
-    token.safeTransfer(to, sent);
+
+    sentBase = FixedPointMathLib.min(baseAmount, localBaseBalance);
+    sentQuote = FixedPointMathLib.min(quoteAmount, localQuoteBalance);
+    BASE.safeTransfer(to, sentBase);
+    QUOTE.safeTransfer(to, sentQuote);
   }
 
   /**
@@ -366,9 +411,16 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
       if (currentTime > s.lastTimestamp) {
         uint256 supply = totalSupply();
         uint256 spanned = currentTime - s.lastTimestamp;
-        // TODO: check if fullMulDiv is necessary
-        feeShares = supply.fullMulDiv(s.managementFee * spanned, MANAGEMENT_FEE_PRECISION);
+        feeShares = supply.mulDiv(s.managementFee * spanned, MANAGEMENT_FEE_PRECISION);
       }
     }
+  }
+
+  /**
+   * @notice Internal view function to check if the vault is paused
+   * @dev Reverts if the vault is paused
+   */
+  function _checkPaused() internal view {
+    if (state.paused) revert Paused();
   }
 }

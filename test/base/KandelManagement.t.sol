@@ -117,7 +117,7 @@ contract KandelManagementTest is MangroveTest {
       guardian
     );
 
-    (,, uint16 managementFee,) = testManagement.state();
+    (,, uint16 managementFee,,) = testManagement.state();
     assertEq(managementFee, 10_000, "Should accept exactly 10% management fee");
   }
 
@@ -132,7 +132,7 @@ contract KandelManagementTest is MangroveTest {
     KandelManagement testManagement =
       new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, testFee, oracle, owner, guardian);
 
-    (,, uint16 managementFee,) = testManagement.state();
+    (,, uint16 managementFee,,) = testManagement.state();
     assertEq(managementFee, testFee, "Should accept 5% management fee");
   }
 
@@ -155,7 +155,7 @@ contract KandelManagementTest is MangroveTest {
       guardian
     );
 
-    (,, uint16 managementFee,) = testManagement.state();
+    (,, uint16 managementFee,,) = testManagement.state();
     assertEq(managementFee, 0, "Should accept 0% management fee");
   }
 
@@ -260,13 +260,13 @@ contract KandelManagementTest is MangroveTest {
     // Test 9999 (9.999%) - should work
     KandelManagement testManagement9999 =
       new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 9_999, oracle, owner, guardian);
-    (,, uint16 fee9999,) = testManagement9999.state();
+    (,, uint16 fee9999,,) = testManagement9999.state();
     assertEq(fee9999, 9_999, "Should accept 9.999% fee");
 
     // Test 10000 (10%) - should work
     KandelManagement testManagement10000 =
       new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, 10_000, oracle, owner, guardian);
-    (,, uint16 fee10000,) = testManagement10000.state();
+    (,, uint16 fee10000,,) = testManagement10000.state();
     assertEq(fee10000, 10_000, "Should accept 10% fee");
 
     // Test 10001 (10.001%) - should fail
@@ -293,7 +293,7 @@ contract KandelManagementTest is MangroveTest {
       KandelManagement testManagement =
         new KandelManagement(seeder, address(WETH), address(USDC), 1, manager, validFees[i], oracle, owner, guardian);
 
-      (,, uint16 actualFee,) = testManagement.state();
+      (,, uint16 actualFee,,) = testManagement.state();
       assertEq(actualFee, validFees[i], string(abi.encodePacked("Should accept fee: ", validFees[i])));
     }
   }
@@ -324,27 +324,35 @@ contract KandelManagementTest is MangroveTest {
     management.setManager(makeAddr("newManager"));
   }
 
-  function test_setFeeRecipient() public {
+  function test_setFeeData() public {
     address newFeeRecipient = makeAddr("newFeeRecipient");
+    uint16 newManagementFee = 2500; // 25%
 
     vm.expectEmit(true, false, false, true);
-    emit KandelManagement.SetFeeRecipient(newFeeRecipient);
+    emit KandelManagement.SetFeeData(newFeeRecipient, newManagementFee);
 
     vm.prank(owner);
-    management.setFeeRecipient(newFeeRecipient);
+    management.setFeeData(newFeeRecipient, newManagementFee);
 
-    (, address feeRecipient,,) = management.state();
+    (, address feeRecipient, uint16 managementFee,,) = management.state();
     assertEq(feeRecipient, newFeeRecipient);
+    assertEq(managementFee, newManagementFee);
   }
 
-  function test_setFeeRecipient_onlyOwner() public {
+  function test_setFeeData_onlyOwner() public {
     vm.prank(manager);
     vm.expectRevert();
-    management.setFeeRecipient(makeAddr("newFeeRecipient"));
+    management.setFeeData(makeAddr("newFeeRecipient"), 1000);
+  }
+
+  function test_setFeeData_maxFeeExceeded() public {
+    vm.prank(owner);
+    vm.expectRevert(KandelManagement.MaxManagementFeeExceeded.selector);
+    management.setFeeData(makeAddr("newFeeRecipient"), 10001); // > 10000 (10%)
   }
 
   function test_initialState() public view {
-    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp) = management.state();
+    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp,) = management.state();
 
     assertEq(inKandel, false);
     assertEq(feeRecipient, owner);
@@ -361,7 +369,7 @@ contract KandelManagementTest is MangroveTest {
     vm.prank(manager);
     management.populateFromOffset{value: 0.01 ether}(0, 5, Tick.wrap(0), 1, 2, 100e6, 1 ether, params);
 
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
   }
 
@@ -388,7 +396,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
 
     // Check initial state
-    (bool inKandelBefore,,,) = management.state();
+    (bool inKandelBefore,,,,) = management.state();
     assertFalse(inKandelBefore);
 
     // Set up Kandel parameters
@@ -419,7 +427,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount, "Kandel should have received all USDC");
 
     // Verify state changes
-    (bool inKandelAfter,,,) = management.state();
+    (bool inKandelAfter,,,,) = management.state();
     assertTrue(inKandelAfter, "inKandel should be set to true");
   }
 
@@ -458,7 +466,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
     assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
 
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
   }
 
@@ -492,7 +500,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
 
     // But inKandel should still be set
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
   }
 
@@ -605,9 +613,9 @@ contract KandelManagementTest is MangroveTest {
     vm.expectEmit(true, false, false, true);
     emit KandelManagement.SetManager(newManager);
 
-    // Expect SetFeeRecipient event for initial fee recipient (owner)
+    // Expect SetFeeData event for initial fee data (owner and management fee)
     vm.expectEmit(true, false, false, true);
-    emit KandelManagement.SetFeeRecipient(newOwner);
+    emit KandelManagement.SetFeeData(newOwner, newManagementFee);
 
     // Create new KandelManagement instance (should emit both events)
     KandelManagement newManagement = new KandelManagement(
@@ -619,7 +627,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(newManagement.owner(), newOwner, "Owner should be set correctly");
     assertEq(newManagement.guardian(), newGuardian, "Guardian should be set correctly");
 
-    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp) = newManagement.state();
+    (bool inKandel, address feeRecipient, uint16 managementFee, uint40 lastTimestamp,) = newManagement.state();
     assertEq(inKandel, false, "inKandel should be false initially");
     assertEq(feeRecipient, newOwner, "Fee recipient should be owner initially");
     assertEq(managementFee, newManagementFee, "Management fee should match");
@@ -642,7 +650,7 @@ contract KandelManagementTest is MangroveTest {
     emit KandelManagement.SetManager(ownerManager);
 
     vm.expectEmit(true, false, false, true);
-    emit KandelManagement.SetFeeRecipient(ownerManager);
+    emit KandelManagement.SetFeeData(ownerManager, testFee);
 
     // Create new KandelManagement with same address for owner and manager
     KandelManagement newManagement = new KandelManagement(
@@ -661,7 +669,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(newManagement.manager(), ownerManager, "Manager should be ownerManager");
     assertEq(newManagement.owner(), ownerManager, "Owner should be ownerManager");
 
-    (, address feeRecipient,,) = newManagement.state();
+    (, address feeRecipient,,,) = newManagement.state();
     assertEq(feeRecipient, ownerManager, "Fee recipient should be ownerManager");
   }
 
@@ -682,7 +690,7 @@ contract KandelManagementTest is MangroveTest {
     emit KandelManagement.SetManager(testManager);
 
     vm.expectEmit(true, false, false, true);
-    emit KandelManagement.SetFeeRecipient(testOwner);
+    emit KandelManagement.SetFeeData(testOwner, zeroFee);
 
     // Create new KandelManagement with zero fee
     KandelManagement newManagement = new KandelManagement(
@@ -690,7 +698,7 @@ contract KandelManagementTest is MangroveTest {
     );
 
     // Verify zero fee is set correctly
-    (,, uint16 managementFee,) = newManagement.state();
+    (,, uint16 managementFee,,) = newManagement.state();
     assertEq(managementFee, 0, "Management fee should be zero");
   }
 
@@ -718,7 +726,7 @@ contract KandelManagementTest is MangroveTest {
     // Verify funds are in Kandel
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
     assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount);
-    (bool inKandelBefore,,,) = management.state();
+    (bool inKandelBefore,,,,) = management.state();
     assertTrue(inKandelBefore);
 
     // Retract offers without withdrawing funds or provisions
@@ -730,7 +738,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(WETH.balanceOf(address(management)), 0);
     assertEq(USDC.balanceOf(address(management)), 0);
 
-    (bool inKandelAfter,,,) = management.state();
+    (bool inKandelAfter,,,,) = management.state();
     assertTrue(inKandelAfter, "inKandel should remain true");
 
     vm.stopPrank();
@@ -763,7 +771,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
 
     // inKandel should be set to false
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertFalse(inKandel, "inKandel should be false after withdrawing funds");
 
     vm.stopPrank();
@@ -821,7 +829,7 @@ contract KandelManagementTest is MangroveTest {
     assertGt(manager.balance, managerEthBefore);
 
     // Check state
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertFalse(inKandel);
 
     vm.stopPrank();
@@ -853,7 +861,7 @@ contract KandelManagementTest is MangroveTest {
     // Verify initial state
     assertEq(WETH.balanceOf(address(management)), 0);
     assertEq(USDC.balanceOf(address(management)), 0);
-    (bool inKandelBefore,,,) = management.state();
+    (bool inKandelBefore,,,,) = management.state();
     assertTrue(inKandelBefore);
 
     // Retract offers with partial fund withdrawal
@@ -864,13 +872,13 @@ contract KandelManagementTest is MangroveTest {
     // Verify partial funds transferred back to management contract
     assertEq(WETH.balanceOf(address(management)), partialBase);
     assertEq(USDC.balanceOf(address(management)), partialQuote);
-    
+
     // Verify remaining funds still in Kandel
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount - partialBase);
     assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount - partialQuote);
 
     // Verify state changed to false even with partial withdrawal
-    (bool inKandelAfter,,,) = management.state();
+    (bool inKandelAfter,,,,) = management.state();
     assertFalse(inKandelAfter, "inKandel should be false even after partial withdrawal");
 
     vm.stopPrank();
@@ -898,7 +906,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management)), 0);
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
     assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount);
-    (bool inKandelBefore,,,) = management.state();
+    (bool inKandelBefore,,,,) = management.state();
     assertTrue(inKandelBefore);
 
     // Withdraw funds
@@ -911,7 +919,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(USDC.balanceOf(address(management.KANDEL())), 0);
 
     // Verify state change
-    (bool inKandelAfter,,,) = management.state();
+    (bool inKandelAfter,,,,) = management.state();
     assertFalse(inKandelAfter, "inKandel should be false after withdrawal");
 
     vm.stopPrank();
@@ -943,7 +951,7 @@ contract KandelManagementTest is MangroveTest {
     // Verify initial state
     assertEq(WETH.balanceOf(address(management)), 0);
     assertEq(USDC.balanceOf(address(management)), 0);
-    (bool inKandelBefore,,,) = management.state();
+    (bool inKandelBefore,,,,) = management.state();
     assertTrue(inKandelBefore);
 
     // Withdraw partial amounts
@@ -954,13 +962,13 @@ contract KandelManagementTest is MangroveTest {
     // Verify partial funds transferred back to management contract
     assertEq(WETH.balanceOf(address(management)), partialBase);
     assertEq(USDC.balanceOf(address(management)), partialQuote);
-    
+
     // Verify remaining funds still in Kandel
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount - partialBase);
     assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount - partialQuote);
 
     // Verify state changed to false even with partial withdrawal
-    (bool inKandelAfter,,,) = management.state();
+    (bool inKandelAfter,,,,) = management.state();
     assertFalse(inKandelAfter, "inKandel should be false even after partial withdrawal");
 
     vm.stopPrank();
@@ -1217,7 +1225,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params);
 
     // Verify state changed
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel, "inKandel should be true after populate");
   }
 
@@ -1236,7 +1244,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 7, Tick.wrap(0), 1, 3, 200e6, 1 ether, params);
 
     // Verify inKandel is true
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
 
     // Add more funds for second populate
@@ -1248,7 +1256,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 7, Tick.wrap(5), 1, 3, 300e6, 1.5 ether, params);
 
     // State should still be true
-    (inKandel,,,) = management.state();
+    (inKandel,,,,) = management.state();
     assertTrue(inKandel);
 
     vm.stopPrank();
@@ -1269,7 +1277,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.08 ether}(0, 9, Tick.wrap(0), 1, 4, 250e6, 1.5 ether, params);
 
     // Verify inKandel is true
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
 
     // Expect FundsExitedKandel event when withdrawing
@@ -1279,7 +1287,7 @@ contract KandelManagementTest is MangroveTest {
     management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // Verify state changed
-    (inKandel,,,) = management.state();
+    (inKandel,,,,) = management.state();
     assertFalse(inKandel, "inKandel should be false after withdrawal");
 
     vm.stopPrank();
@@ -1300,7 +1308,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 11, Tick.wrap(0), 1, 5, 300e6, 2 ether, params);
 
     // Verify inKandel is true
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
 
     // Expect FundsExitedKandel event when retracting with fund withdrawal
@@ -1310,7 +1318,7 @@ contract KandelManagementTest is MangroveTest {
     management.retractOffers(0, 11, type(uint256).max, type(uint256).max, false, payable(address(0)));
 
     // Verify state changed
-    (inKandel,,,) = management.state();
+    (inKandel,,,,) = management.state();
     assertFalse(inKandel, "inKandel should be false after retract with withdrawal");
 
     vm.stopPrank();
@@ -1331,14 +1339,14 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.06 ether}(0, 7, Tick.wrap(0), 1, 3, 200e6, 1 ether, params);
 
     // Verify inKandel is true
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertTrue(inKandel);
 
     // Retract without withdrawing funds should NOT emit FundsExitedKandel
     management.retractOffers(0, 7, 0, 0, false, payable(address(0)));
 
     // State should remain true
-    (inKandel,,,) = management.state();
+    (inKandel,,,,) = management.state();
     assertTrue(inKandel, "inKandel should remain true when not withdrawing funds");
 
     vm.stopPrank();
@@ -1346,7 +1354,7 @@ contract KandelManagementTest is MangroveTest {
 
   function test_fundsExitedKandel_event_notEmittedWhenAlreadyNotInKandel() public {
     // Verify initial state is false
-    (bool inKandel,,,) = management.state();
+    (bool inKandel,,,,) = management.state();
     assertFalse(inKandel);
 
     vm.startPrank(manager);
@@ -1356,7 +1364,7 @@ contract KandelManagementTest is MangroveTest {
     management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // State should remain false
-    (inKandel,,,) = management.state();
+    (inKandel,,,,) = management.state();
     assertFalse(inKandel);
 
     vm.stopPrank();

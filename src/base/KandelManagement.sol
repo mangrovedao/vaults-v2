@@ -56,10 +56,11 @@ contract KandelManagement is OracleRange {
   event SetManager(address indexed manager);
 
   /**
-   * @notice Emitted when the fee recipient is updated
+   * @notice Emitted when fee data is updated
    * @param feeRecipient The address of the new fee recipient
+   * @param managementFee The new management fee in basis points
    */
-  event SetFeeRecipient(address indexed feeRecipient);
+  event SetFeeData(address indexed feeRecipient, uint16 managementFee);
 
   /**
    * @notice Emitted when funds are deposited into the Kandel strategy
@@ -106,12 +107,14 @@ contract KandelManagement is OracleRange {
    * @param feeRecipient Address that receives management fees
    * @param managementFee Management fee in basis points (10000 = 100%)
    * @param lastTimestamp Last timestamp when state was updated
+   * @param paused Whether the contract is paused (can be used for minting/burning)
    */
   struct State {
     bool inKandel; // 8 bits
     address feeRecipient; // 160 bits -> 168 bits
     uint16 managementFee; // 16 bits -> 184 bits
     uint40 lastTimestamp; // 40 bits -> 224 bits
+    bool paused; // 8 bits -> 232 bits
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -154,7 +157,7 @@ contract KandelManagement is OracleRange {
    * @param _owner The owner address (inherited from OracleRange)
    * @param _guardian The guardian address (inherited from OracleRange)
    * @dev Deploys a new GeometricKandel instance through the seeder
-   * @dev Emits SetManager and SetFeeRecipient events for initial state indexing
+   * @dev Emits SetManager and SetFeeData events for initial state indexing
    */
   constructor(
     AbstractKandelSeeder seeder,
@@ -180,7 +183,8 @@ contract KandelManagement is OracleRange {
       inKandel: false,
       feeRecipient: _owner,
       managementFee: _managementFee,
-      lastTimestamp: uint40(block.timestamp)
+      lastTimestamp: uint40(block.timestamp),
+      paused: false
     });
 
     // Deploy Kandel instance with reneging disabled (false parameter)
@@ -188,7 +192,7 @@ contract KandelManagement is OracleRange {
 
     // Emit events for initial state for indexing purposes
     emit SetManager(_manager);
-    emit SetFeeRecipient(_owner);
+    emit SetFeeData(_owner, _managementFee);
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -206,13 +210,17 @@ contract KandelManagement is OracleRange {
   }
 
   /**
-   * @notice Sets a new fee recipient for the contract
+   * @notice Sets fee data (recipient and management fee) for the contract
    * @param _feeRecipient The address of the new fee recipient
-   * @dev Only owner can set the fee recipient. Fee recipient receives management fees
+   * @param _managementFee The new management fee in basis points (10000 = 100%)
+   * @dev Only owner can set fee data. Fee recipient receives management fees
+   * @dev Virtual function can be overridden by inheriting contracts
    */
-  function setFeeRecipient(address _feeRecipient) external onlyOwner {
+  function setFeeData(address _feeRecipient, uint16 _managementFee) public virtual onlyOwner {
+    if (_managementFee > MAX_MANAGEMENT_FEE) revert MaxManagementFeeExceeded();
     state.feeRecipient = _feeRecipient;
-    emit SetFeeRecipient(_feeRecipient);
+    state.managementFee = _managementFee;
+    emit SetFeeData(_feeRecipient, _managementFee);
   }
 
   /**
