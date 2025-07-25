@@ -722,7 +722,7 @@ contract KandelManagementTest is MangroveTest {
     assertTrue(inKandelBefore);
 
     // Retract offers without withdrawing funds or provisions
-    management.retractOffers(0, 5, false, false, payable(address(0)));
+    management.retractOffers(0, 5, 0, 0, false, payable(address(0)));
 
     // Funds should still be in Kandel, inKandel should still be true
     assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount);
@@ -754,7 +754,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params);
 
     // Retract offers and withdraw funds
-    management.retractOffers(0, 11, true, false, payable(address(0)));
+    management.retractOffers(0, 11, type(uint256).max, type(uint256).max, false, payable(address(0)));
 
     // Funds should be back in management contract, Kandel should be empty
     assertEq(WETH.balanceOf(address(management)), baseAmount);
@@ -782,7 +782,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.1 ether}(0, 5, Tick.wrap(0), 1, 2, 0, 0, params);
 
     // Retract offers and withdraw provisions to manager
-    management.retractOffers(0, 5, false, true, payable(manager));
+    management.retractOffers(0, 5, 0, 0, true, payable(manager));
 
     // Manager should have received ETH provisions back
     assertGt(manager.balance, managerEthBefore, "Manager should have received ETH provisions");
@@ -809,7 +809,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.05 ether}(0, 7, Tick.wrap(0), 1, 3, 100e6, 1 ether, params);
 
     // Retract offers with both fund and provision withdrawal
-    management.retractOffers(0, 7, true, true, payable(manager));
+    management.retractOffers(0, 7, type(uint256).max, type(uint256).max, true, payable(manager));
 
     // Check funds returned to management contract
     assertEq(WETH.balanceOf(address(management)), baseAmount);
@@ -830,7 +830,50 @@ contract KandelManagementTest is MangroveTest {
   function test_retractOffers_onlyManager() public {
     vm.prank(owner);
     vm.expectRevert(KandelManagement.NotManager.selector);
-    management.retractOffers(0, 5, false, false, payable(address(0)));
+    management.retractOffers(0, 5, 0, 0, false, payable(address(0)));
+  }
+
+  function test_retractOffers_partialWithdrawal() public {
+    // First populate with funds
+    uint256 baseAmount = 12 ether;
+    uint256 quoteAmount = 24000e6;
+
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+
+    CoreKandel.Params memory params;
+    params.pricePoints = 11;
+    params.stepSize = 1;
+
+    vm.deal(address(manager), 0.1 ether);
+    vm.startPrank(manager);
+
+    management.populateFromOffset{value: 0.1 ether}(0, 11, Tick.wrap(0), 1, 5, 100e6, 1 ether, params);
+
+    // Verify initial state
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    (bool inKandelBefore,,,) = management.state();
+    assertTrue(inKandelBefore);
+
+    // Retract offers with partial fund withdrawal
+    uint256 partialBase = 4 ether;
+    uint256 partialQuote = 8000e6;
+    management.retractOffers(0, 5, partialBase, partialQuote, false, payable(address(0)));
+
+    // Verify partial funds transferred back to management contract
+    assertEq(WETH.balanceOf(address(management)), partialBase);
+    assertEq(USDC.balanceOf(address(management)), partialQuote);
+    
+    // Verify remaining funds still in Kandel
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount - partialBase);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount - partialQuote);
+
+    // Verify state changed to false even with partial withdrawal
+    (bool inKandelAfter,,,) = management.state();
+    assertFalse(inKandelAfter, "inKandel should be false even after partial withdrawal");
+
+    vm.stopPrank();
   }
 
   function test_withdrawFunds() public {
@@ -859,7 +902,7 @@ contract KandelManagementTest is MangroveTest {
     assertTrue(inKandelBefore);
 
     // Withdraw funds
-    management.withdrawFunds();
+    management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // Verify funds transferred back to management contract
     assertEq(WETH.balanceOf(address(management)), baseAmount);
@@ -877,7 +920,50 @@ contract KandelManagementTest is MangroveTest {
   function test_withdrawFunds_onlyManager() public {
     vm.prank(owner);
     vm.expectRevert(KandelManagement.NotManager.selector);
-    management.withdrawFunds();
+    management.withdrawFunds(type(uint256).max, type(uint256).max);
+  }
+
+  function test_withdrawFunds_partialAmounts() public {
+    // First populate with funds
+    uint256 baseAmount = 10 ether;
+    uint256 quoteAmount = 20000e6;
+
+    MockERC20(address(WETH)).mint(address(management), baseAmount);
+    MockERC20(address(USDC)).mint(address(management), quoteAmount);
+
+    CoreKandel.Params memory params;
+    params.pricePoints = 9;
+    params.stepSize = 1;
+
+    vm.deal(address(manager), 0.08 ether);
+    vm.startPrank(manager);
+
+    management.populateFromOffset{value: 0.08 ether}(0, 9, Tick.wrap(0), 1, 4, 200e6, 2 ether, params);
+
+    // Verify initial state
+    assertEq(WETH.balanceOf(address(management)), 0);
+    assertEq(USDC.balanceOf(address(management)), 0);
+    (bool inKandelBefore,,,) = management.state();
+    assertTrue(inKandelBefore);
+
+    // Withdraw partial amounts
+    uint256 partialBase = 3 ether;
+    uint256 partialQuote = 5000e6;
+    management.withdrawFunds(partialBase, partialQuote);
+
+    // Verify partial funds transferred back to management contract
+    assertEq(WETH.balanceOf(address(management)), partialBase);
+    assertEq(USDC.balanceOf(address(management)), partialQuote);
+    
+    // Verify remaining funds still in Kandel
+    assertEq(WETH.balanceOf(address(management.KANDEL())), baseAmount - partialBase);
+    assertEq(USDC.balanceOf(address(management.KANDEL())), quoteAmount - partialQuote);
+
+    // Verify state changed to false even with partial withdrawal
+    (bool inKandelAfter,,,) = management.state();
+    assertFalse(inKandelAfter, "inKandel should be false even after partial withdrawal");
+
+    vm.stopPrank();
   }
 
   function test_withdrawFromMangrove() public {
@@ -925,7 +1011,7 @@ contract KandelManagementTest is MangroveTest {
     management.populateFromOffset{value: 0.05 ether}(0, 5, Tick.wrap(0), 1, 2, 0, 0, params);
 
     // Retract offers and withdraw provisions to custom recipient
-    management.retractOffers(0, 5, false, true, customRecipient);
+    management.retractOffers(0, 5, 0, 0, true, customRecipient);
 
     // Custom recipient should have received ETH provisions
     assertGt(customRecipient.balance, customRecipientEthBefore, "Custom recipient should have received ETH provisions");
@@ -1077,7 +1163,7 @@ contract KandelManagementTest is MangroveTest {
     assertEq(vaultQuoteBefore, 0);
 
     // Withdraw funds back to vault
-    management.withdrawFunds();
+    management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // Verify funds moved from Kandel to vault
     (uint256 kandelBaseAfter, uint256 kandelQuoteAfter) = management.kandelBalances();
@@ -1190,7 +1276,7 @@ contract KandelManagementTest is MangroveTest {
     vm.expectEmit(false, false, false, true);
     emit KandelManagement.FundsExitedKandel();
 
-    management.withdrawFunds();
+    management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // Verify state changed
     (inKandel,,,) = management.state();
@@ -1221,7 +1307,7 @@ contract KandelManagementTest is MangroveTest {
     vm.expectEmit(false, false, false, true);
     emit KandelManagement.FundsExitedKandel();
 
-    management.retractOffers(0, 11, true, false, payable(address(0)));
+    management.retractOffers(0, 11, type(uint256).max, type(uint256).max, false, payable(address(0)));
 
     // Verify state changed
     (inKandel,,,) = management.state();
@@ -1249,7 +1335,7 @@ contract KandelManagementTest is MangroveTest {
     assertTrue(inKandel);
 
     // Retract without withdrawing funds should NOT emit FundsExitedKandel
-    management.retractOffers(0, 7, false, false, payable(address(0)));
+    management.retractOffers(0, 7, 0, 0, false, payable(address(0)));
 
     // State should remain true
     (inKandel,,,) = management.state();
@@ -1267,7 +1353,7 @@ contract KandelManagementTest is MangroveTest {
 
     // Calling withdrawFunds when already not in Kandel should not emit event
     // This tests the conditional check in withdrawFunds
-    management.withdrawFunds();
+    management.withdrawFunds(type(uint256).max, type(uint256).max);
 
     // State should remain false
     (inKandel,,,) = management.state();

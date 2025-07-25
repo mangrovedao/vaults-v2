@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {MangroveVaultV2, ERC20, OracleData} from "../src/MangroveVaultV2.sol";
+import {MangroveVaultV2, ERC20, OracleData, OracleLib} from "../src/MangroveVaultV2.sol";
 import {MangroveTest, MockERC20} from "./base/MangroveTest.t.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 import {TickLib, Tick} from "@mgv/lib/core/TickLib.sol";
 import {console} from "forge-std/console.sol";
 
 contract MangroveVaultV2Test is MangroveTest {
+  using OracleLib for OracleData;
   using FixedPointMathLib for uint256;
 
   MangroveVaultV2 public vault;
@@ -571,8 +572,6 @@ contract MangroveVaultV2Test is MangroveTest {
 
     uint256 quoteAmount = Tick.wrap(tick + deviation).inboundFromOutbound(baseAmount);
 
-    uint256 absDeviation = deviation > 0 ? uint256(deviation) : uint256(-deviation);
-
     MockERC20(address(WETH)).mint(user1, baseAmount);
     MockERC20(address(USDC)).mint(user1, quoteAmount);
     vm.startPrank(user1);
@@ -580,7 +579,11 @@ contract MangroveVaultV2Test is MangroveTest {
     USDC.approve(address(vault), quoteAmount);
     vm.stopPrank();
 
-    if (absDeviation >= maxDeviation) {
+    // There can be imprecisions when computing the tick with small values
+    // So we recompute it to see if we are in range
+    Tick realTick = TickLib.tickFromVolumes(quoteAmount, baseAmount);
+
+    if (!oracle.withinDeviation(realTick)) {
       vm.expectRevert(MangroveVaultV2.InvalidInitialMintAmounts.selector);
       vm.prank(user1);
       vault.mint(user1, baseAmount, quoteAmount, 0);

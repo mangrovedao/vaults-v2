@@ -321,22 +321,26 @@ contract KandelManagement is OracleRange {
    * @notice Retracts Kandel offers from the market with optional fund and provision withdrawal
    * @param from The starting index of offers to retract
    * @param to The ending index of offers to retract
-   * @param _withdrawFunds Whether to withdraw token funds from Kandel to this contract
+   * @param baseAmount Amount of base tokens to withdraw (0 = no withdrawal, type(uint256).max = maximum)
+   * @param quoteAmount Amount of quote tokens to withdraw (0 = no withdrawal, type(uint256).max = maximum)
    * @param withdrawProvisions Whether to withdraw ETH provisions from Mangrove to manager
    * @param recipient The address to which the withdrawn provisions should be sent to.
    * @dev Retracting offers removes them from the market but keeps funds in Kandel unless withdrawn
-   * @dev Setting withdrawFunds to true will also set inKandel to false
+   * @dev If both baseAmount and quoteAmount are 0, no funds are withdrawn and inKandel remains true
+   * @dev If either amount is non-zero, funds are withdrawn and inKandel is set to false
+   * @dev Passing type(uint256).max for amounts will withdraw maximum available tokens
    */
   function retractOffers(
     uint256 from,
     uint256 to,
-    bool _withdrawFunds,
+    uint256 baseAmount,
+    uint256 quoteAmount,
     bool withdrawProvisions,
     address payable recipient
   ) external onlyManager {
     KANDEL.retractOffers(from, to);
-    if (_withdrawFunds) {
-      KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
+    if (baseAmount > 0 || quoteAmount > 0) {
+      KANDEL.withdrawFunds(baseAmount, quoteAmount, address(this));
       if (state.inKandel) {
         state.inKandel = false;
         emit FundsExitedKandel();
@@ -348,12 +352,15 @@ contract KandelManagement is OracleRange {
   }
 
   /**
-   * @notice Withdraws all token funds from Kandel strategy back to this contract
-   * @dev Withdraws maximum available base and quote tokens from Kandel to management contract
-   * @dev Sets inKandel state to false as funds are no longer in the strategy
+   * @notice Withdraws token funds from Kandel strategy back to this contract
+   * @param baseAmount Amount of base tokens to withdraw (use type(uint256).max for maximum)
+   * @param quoteAmount Amount of quote tokens to withdraw (use type(uint256).max for maximum)
+   * @dev Passing type(uint256).max will withdraw the maximum available amount for each token
+   * @dev Not passing the full amount can be useful if underlying vault strategies don't have all liquidity available yet
+   * @dev Always sets inKandel state to false, meaning any new funds will go to the vault and not the Kandel
    */
-  function withdrawFunds() external onlyManager {
-    KANDEL.withdrawFunds(type(uint256).max, type(uint256).max, address(this));
+  function withdrawFunds(uint256 baseAmount, uint256 quoteAmount) external onlyManager {
+    KANDEL.withdrawFunds(baseAmount, quoteAmount, address(this));
     if (state.inKandel) {
       state.inKandel = false;
       emit FundsExitedKandel();

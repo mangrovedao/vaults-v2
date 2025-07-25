@@ -174,8 +174,11 @@ library OracleLib {
    *      The function calculates the trade tick from volumes and validates it against oracle constraints.
    */
   function acceptsTrade(OracleData memory self, bool isSell, uint256 received, uint256 sent) public view returns (bool) {
-    Tick tradeTick = TickLib.tickFromVolumes(isSell ? received : sent, isSell ? sent : received);
-    return self.accepts(tradeTick);
+    int256 tradeTick = Tick.unwrap(TickLib.tickFromVolumes(received, sent));
+    int256 oracleTick = Tick.unwrap(self.tick());
+    if (!isSell) oracleTick = -oracleTick;
+
+    return oracleTick - tradeTick <= int256(uint256(self.maxDeviation));
   }
 
   /**
