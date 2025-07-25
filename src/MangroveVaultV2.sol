@@ -50,6 +50,9 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
   /// @notice Thrown when the vault is paused
   error Paused();
 
+  /// @notice Thrown when the max mint amounts are exceeded
+  error MaxMintAmountsExceeded();
+
   /*//////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
@@ -83,6 +86,13 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    * @param paused The new paused state
    */
   event SetPaused(bool paused);
+
+  /**
+   * @notice Emitted when the max mint amounts are set
+   * @param maxBase The new max base amount
+   * @param maxQuote The new max quote amount
+   */
+  event SetMaxMintAmounts(uint128 maxBase, uint128 maxQuote);
 
   /*//////////////////////////////////////////////////////////////
                            CONSTANTS
@@ -141,6 +151,17 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     uint8 quoteOffsetDecimals;
   }
 
+  struct MaxMintAmounts {
+    uint128 maxBase;
+    uint128 maxQuote;
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                        STATE VARIABLES
+  //////////////////////////////////////////////////////////////*/
+
+  MaxMintAmounts public maxMintAmounts;
+
   /*//////////////////////////////////////////////////////////////
                           CONSTRUCTOR
   //////////////////////////////////////////////////////////////*/
@@ -168,6 +189,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     name_ = _params.name;
     symbol_ = _params.symbol;
     QUOTE_OFFSET = 2 * 10 ** _params.quoteOffsetDecimals;
+    maxMintAmounts = MaxMintAmounts({maxBase: type(uint128).max, maxQuote: type(uint128).max});
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -211,6 +233,12 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     returns (uint256 sharesOut, uint256 baseIn, uint256 quoteIn)
   {
     (uint256 baseBalance, uint256 quoteBalance) = totalBalances();
+
+    if (baseBalance + baseAmountMax > maxMintAmounts.maxBase || quoteBalance + quoteAmountMax > maxMintAmounts.maxQuote)
+    {
+      revert MaxMintAmountsExceeded();
+    }
+
     uint256 supply = totalSupply();
     supply += _accruedFeeShares(state);
 
@@ -344,6 +372,17 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     if (paused == _paused) revert PausedStateNotChanged();
     state.paused = _paused;
     emit SetPaused(_paused);
+  }
+
+  /**
+   * @notice Sets the max mint amounts for the vault
+   * @param maxBase The new max base amount
+   * @param maxQuote The new max quote amount
+   * @dev Only the owner can set the max mint amounts
+   */
+  function setMaxMintAmounts(uint128 maxBase, uint128 maxQuote) external onlyOwner {
+    maxMintAmounts = MaxMintAmounts({maxBase: maxBase, maxQuote: maxQuote});
+    emit SetMaxMintAmounts(maxBase, maxQuote);
   }
 
   /*//////////////////////////////////////////////////////////////

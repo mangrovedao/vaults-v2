@@ -1054,4 +1054,276 @@ contract MangroveVaultV2Test is MangroveTest {
       assertEq(vault.balanceOf(user1), sharesOut - sharesToBurn);
     }
   }
+
+  /*//////////////////////////////////////////////////////////////
+                      MAX MINT AMOUNTS TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_constructor_setsDefaultMaxMintAmounts() public view {
+    (uint128 maxBase, uint128 maxQuote) = vault.maxMintAmounts();
+    assertEq(maxBase, type(uint128).max, "Default max base should be uint128 max");
+    assertEq(maxQuote, type(uint128).max, "Default max quote should be uint128 max");
+  }
+
+  function test_setMaxMintAmounts_onlyOwner() public {
+    uint128 newMaxBase = 50 ether;
+    uint128 newMaxQuote = 100_000e6;
+
+    // Test that non-owner cannot set max mint amounts
+    vm.prank(manager);
+    vm.expectRevert();
+    vault.setMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    vm.prank(guardian);
+    vm.expectRevert();
+    vault.setMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    vm.prank(user1);
+    vm.expectRevert();
+    vault.setMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    // Test that owner can set max mint amounts
+    vm.expectEmit(true, true, false, true);
+    emit MangroveVaultV2.SetMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    (uint128 maxBase, uint128 maxQuote) = vault.maxMintAmounts();
+    assertEq(maxBase, newMaxBase, "Max base should be updated");
+    assertEq(maxQuote, newMaxQuote, "Max quote should be updated");
+  }
+
+  function test_setMaxMintAmounts_zeroLimits() public {
+    vm.expectEmit(true, true, false, true);
+    emit MangroveVaultV2.SetMaxMintAmounts(0, 0);
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(0, 0);
+
+    (uint128 maxBase, uint128 maxQuote) = vault.maxMintAmounts();
+    assertEq(maxBase, 0, "Max base should be set to zero");
+    assertEq(maxQuote, 0, "Max quote should be set to zero");
+  }
+
+  function test_maxMintAmountsExceeded_initialMint_baseLimit() public {
+    // Set restrictive base limit
+    uint128 maxBase = 5 ether;
+    uint128 maxQuote = type(uint128).max;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Try to mint more than base limit
+    uint256 baseAmount = 10 ether; // Exceeds limit
+    uint256 quoteAmount = 20_000e6;
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(baseAmount, quoteAmount);
+
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+  }
+
+  function test_maxMintAmountsExceeded_initialMint_quoteLimit() public {
+    // Set restrictive quote limit
+    uint128 maxBase = type(uint128).max;
+    uint128 maxQuote = 10_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Try to mint more than quote limit
+    uint256 baseAmount = 5 ether;
+    uint256 quoteAmount = 20_000e6; // Exceeds limit
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(baseAmount, quoteAmount);
+
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+  }
+
+  function test_maxMintAmountsExceeded_initialMint_bothLimits() public {
+    // Set restrictive limits for both tokens
+    uint128 maxBase = 5 ether;
+    uint128 maxQuote = 10_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Try to mint more than both limits
+    uint256 baseAmount = 10 ether; // Exceeds base limit
+    uint256 quoteAmount = 20_000e6; // Exceeds quote limit
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(baseAmount, quoteAmount);
+
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+  }
+
+  function test_maxMintAmountsExceeded_withExistingBalance() public {
+    // First, do an initial mint to create existing balance
+    uint256 initialBase = 2 ether;
+    uint256 initialQuote = 4_000e6;
+
+    vm.prank(user1);
+    vault.mint(user1, initialBase, initialQuote, 0);
+
+    // Now set limits that would be exceeded when combined with existing balance
+    uint128 maxBase = 3 ether; // Initial (2) + new (2) = 4 > 3
+    uint128 maxQuote = 5_000e6; // Initial (4000) + new (2000) = 6000 > 5000
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Try to mint amounts that exceed limits when combined with existing balance
+    uint256 newBase = 2 ether;
+    uint256 newQuote = 2_000e6;
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(newBase, newQuote);
+
+    vm.prank(user2);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user2, newBase, newQuote, 0);
+  }
+
+  function test_maxMintAmounts_exactLimit() public {
+    // Set specific limits
+    uint128 maxBase = 10 ether;
+    uint128 maxQuote = 20_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Mint exactly at the limits (should succeed)
+    uint256 baseAmount = 10 ether; // Exactly at limit
+    uint256 quoteAmount = 20_000e6; // Exactly at limit
+
+    // This should not revert
+    (uint256 sharesOut, uint256 baseIn, uint256 quoteIn) = vault.getMintAmounts(baseAmount, quoteAmount);
+
+    assertEq(baseIn, baseAmount, "Should use exact base amount");
+    assertEq(quoteIn, quoteAmount, "Should use exact quote amount");
+    assertGt(sharesOut, 0, "Should mint some shares");
+
+    vm.prank(user1);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+
+    assertEq(vault.balanceOf(user1), sharesOut, "User should receive expected shares");
+  }
+
+  function test_maxMintAmounts_justUnderLimit() public {
+    // Set specific limits
+    uint128 maxBase = 10 ether;
+    uint128 maxQuote = 20_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // Mint just under the limits (should succeed)
+    uint256 baseAmount = 9.99 ether; // Just under limit
+    uint256 quoteAmount = 19_999e6; // Just under limit
+
+    // This should not revert
+    (uint256 sharesOut, uint256 baseIn, uint256 quoteIn) = vault.getMintAmounts(baseAmount, quoteAmount);
+
+    assertEq(baseIn, baseAmount, "Should use exact base amount");
+    assertEq(quoteIn, quoteAmount, "Should use exact quote amount");
+    assertGt(sharesOut, 0, "Should mint some shares");
+
+    vm.prank(user1);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+
+    assertEq(vault.balanceOf(user1), sharesOut, "User should receive expected shares");
+  }
+
+  function test_maxMintAmounts_subsequentMints() public {
+    // Initial mint
+    uint256 initialBase = 3 ether;
+    uint256 initialQuote = 6_000e6;
+
+    vm.prank(user1);
+    vault.mint(user1, initialBase, initialQuote, 0);
+
+    // Set limits that allow one more mint but not two
+    uint128 maxBase = 5 ether;
+    uint128 maxQuote = 10_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(maxBase, maxQuote);
+
+    // First subsequent mint should succeed (total: 5 ether, 10_000e6)
+    uint256 secondBase = 2 ether;
+    uint256 secondQuote = 4_000e6;
+
+    vm.prank(user2);
+    vault.mint(user2, secondBase, secondQuote, 0);
+
+    // Third mint should fail as it would exceed limits
+    uint256 thirdBase = 1 ether;
+    uint256 thirdQuote = 1_000e6;
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(thirdBase, thirdQuote);
+
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user1, thirdBase, thirdQuote, 0);
+  }
+
+  function test_maxMintAmounts_zeroLimitsPreventAllMints() public {
+    // Set zero limits
+    vm.prank(owner);
+    vault.setMaxMintAmounts(0, 0);
+
+    // Any mint should fail
+    uint256 baseAmount = 1; // Even tiny amounts should fail
+    uint256 quoteAmount = 1;
+
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.getMintAmounts(baseAmount, quoteAmount);
+
+    vm.prank(user1);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user1, baseAmount, quoteAmount, 0);
+  }
+
+  function test_maxMintAmounts_increasingLimits() public {
+    // Start with low limits
+    uint128 initialMaxBase = 2 ether;
+    uint128 initialMaxQuote = 4_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(initialMaxBase, initialMaxQuote);
+
+    // Mint up to the initial limits
+    vm.prank(user1);
+    vault.mint(user1, 2 ether, 4_000e6, 0);
+
+    // Try to mint more (should fail)
+    vm.prank(user2);
+    vm.expectRevert(MangroveVaultV2.MaxMintAmountsExceeded.selector);
+    vault.mint(user2, 1 ether, 1_000e6, 0);
+
+    // Increase limits
+    uint128 newMaxBase = 5 ether;
+    uint128 newMaxQuote = 10_000e6;
+
+    vm.prank(owner);
+    vault.setMaxMintAmounts(newMaxBase, newMaxQuote);
+
+    // Now the mint should succeed
+    vm.prank(user2);
+    vault.mint(user2, 1 ether, 2_000e6, 0);
+
+    (uint256 totalBase, uint256 totalQuote) = vault.totalBalances();
+    assertLe(totalBase, newMaxBase, "Total base should be within new limit");
+    assertLe(totalQuote, newMaxQuote, "Total quote should be within new limit");
+  }
 }
