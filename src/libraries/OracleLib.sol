@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IOracle} from "../interfaces/IOracle.sol";
-import {Tick} from "@mgv/lib/core/TickLib.sol";
+import {Tick, TickLib} from "@mgv/lib/core/TickLib.sol";
 import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /**
@@ -156,5 +156,44 @@ library OracleLib {
       // Oracle call failed, return false
       return false;
     }
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                         PUBLIC FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Validates if a trade is acceptable based on oracle price constraints
+   * @param self The oracle data configuration
+   * @param isSell True if selling base token for quote token, false if buying base with quote
+   * @param received The amount of tokens received from the trade
+   * @param sent The amount of tokens sent in the trade
+   * @return True if the trade tick is within acceptable oracle range, false otherwise
+   * @dev This function is public (not internal) because it uses TickLib which is a large library.
+   *      Making it internal to contracts would largely increase their bytecode size.
+   *      The function calculates the trade tick from volumes and validates it against oracle constraints.
+   */
+  function acceptsTrade(OracleData memory self, bool isSell, uint256 received, uint256 sent) public view returns (bool) {
+    Tick tradeTick = TickLib.tickFromVolumes(isSell ? received : sent, isSell ? sent : received);
+    return self.accepts(tradeTick);
+  }
+
+  /**
+   * @notice Validates if an initial mint operation is acceptable based on oracle price constraints
+   * @param self The oracle data configuration
+   * @param baseAmount The amount of base tokens in the initial mint
+   * @param quoteAmount The amount of quote tokens in the initial mint
+   * @return True if the mint ratio is within acceptable oracle deviation, false otherwise
+   * @dev This function is public (not internal) because it uses TickLib which is a large library.
+   *      Making it internal to contracts would largely increase their bytecode size.
+   *      The function calculates the tick from the base/quote ratio and validates it's within deviation limits.
+   */
+  function acceptsInitialMint(OracleData memory self, uint256 baseAmount, uint256 quoteAmount)
+    public
+    view
+    returns (bool)
+  {
+    Tick tradeTick = TickLib.tickFromVolumes(quoteAmount, baseAmount);
+    return self.withinDeviation(tradeTick);
   }
 }

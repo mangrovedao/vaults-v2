@@ -77,9 +77,10 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   /// @notice Mapping to track which addresses are whitelisted for rebalancing operations
   mapping(address => bool) public isWhitelisted;
 
-  /// @notice Private mapping to track whitelist propositions with their timestamps
-  /// @dev Maps address to the timestamp when it was proposed (0 = not proposed)
-  mapping(address => uint40) private _whitelistPropositions;
+  /// @notice Mapping to track whitelist propositions with their timestamps
+  /// @dev Maps address to the timestamp when it was proposed for whitelisting (0 = not proposed)
+  /// @dev This mapping is used to implement timelock functionality for whitelist proposals
+  mapping(address => uint40) public whitelistProposedAt;
 
   /*//////////////////////////////////////////////////////////////
                           CONSTRUCTOR
@@ -227,8 +228,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
       : BASE.balanceOf(address(this)) - receiveTokenBalance;
 
     if (sent > 0) {
-      Tick tradeTick = TickLib.tickFromVolumes(_params.isSell ? received : sent, _params.isSell ? sent : received);
-      if (!oracle.accepts(tradeTick)) revert InvalidTradeTick();
+      if (!oracle.acceptsTrade(_params.isSell, received, sent)) revert InvalidTradeTick();
     }
 
     // remove allowance
@@ -255,9 +255,9 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    */
   function proposeWhitelist(address _address) external onlyOwner {
     if (!_canWhitelist(_address)) revert InvalidWhitelistAddress();
-    uint40 existing = _whitelistPropositions[_address];
+    uint40 existing = whitelistProposedAt[_address];
     if (existing > 0) revert AlreadyProposed();
-    _whitelistPropositions[_address] = uint40(block.timestamp);
+    whitelistProposedAt[_address] = uint40(block.timestamp);
     emit WhitelistProposed(_address);
   }
 
@@ -271,7 +271,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @dev Reverts with TimelockNotExpired if the timelock period hasn't passed
    */
   function acceptWhitelist(address _address) external onlyOwner {
-    uint40 existing = _whitelistPropositions[_address];
+    uint40 existing = whitelistProposedAt[_address];
     if (existing == 0) revert NotProposed();
 
     if (oracle.timelocked(existing)) {
@@ -279,7 +279,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     }
 
     isWhitelisted[_address] = true;
-    delete _whitelistPropositions[_address];
+    delete whitelistProposedAt[_address];
     emit WhitelistAccepted(_address);
   }
 
@@ -292,9 +292,9 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @dev Reverts with NotProposed if the address was not proposed
    */
   function rejectWhitelist(address _address) external onlyGuardian {
-    uint40 existing = _whitelistPropositions[_address];
+    uint40 existing = whitelistProposedAt[_address];
     if (existing == 0) revert NotProposed();
-    delete _whitelistPropositions[_address];
+    delete whitelistProposedAt[_address];
     emit WhitelistRejected(_address);
   }
 
@@ -310,42 +310,7 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @dev Current implementation prevents whitelisting the Kandel contract, base token, and quote token
    */
   function _canWhitelist(address _address) internal view virtual returns (bool canWhitelist) {
-    // Cannot whitelist the Kandel contract itself
-    if (_address == address(KANDEL)) return false;
-
-    // Cannot whitelist the base token
-    if (_address == BASE) return false;
-
-    // Cannot whitelist the quote token
-    if (_address == QUOTE) return false;
-
-    return true;
-  }
-
-  /*//////////////////////////////////////////////////////////////
-                       VIEW FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-
-  /**
-   * @notice Returns the timestamp when an address was proposed for whitelisting
-   * @param _address The address to check
-   * @return timestamp The timestamp when the address was proposed (0 if not proposed)
-   * @dev This function allows external callers to check the status of whitelist proposals
-   */
-  function whitelistProposedAt(address _address) external view returns (uint40 timestamp) {
-    return _whitelistPropositions[_address];
-  }
-
-  /**
-   * @notice Checks if a whitelist proposal can be accepted (timelock has expired)
-   * @param _address The address to check
-   * @return canAccept True if the proposal exists and timelock has expired
-   * @dev Returns false if the address was not proposed or if timelock hasn't expired
-   */
-  function canAcceptWhitelist(address _address) external view returns (bool canAccept) {
-    uint40 proposedAt = _whitelistPropositions[_address];
-    if (proposedAt == 0) return false;
-
-    return !oracle.timelocked(proposedAt);
+    // Cannot whitelist the Kandel contract, base token, or quote token
+    return !(_address == address(KANDEL) || _address == BASE || _address == QUOTE);
   }
 }

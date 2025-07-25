@@ -8,7 +8,8 @@ import {
   AbstractKandelSeeder,
   Tick,
   CoreKandel,
-  OracleData
+  OracleData,
+  OracleLib
 } from "../../src/base/KandelManagement.sol";
 import {MangroveTest, MockERC20} from "./MangroveTest.t.sol";
 
@@ -32,6 +33,8 @@ contract MockSwapContract {
 }
 
 contract KandelManagementRebalancingTest is MangroveTest {
+  using OracleLib for OracleData;
+
   KandelManagementRebalancing public management;
   MockSwapContract public mockSwap;
   address public manager;
@@ -56,6 +59,27 @@ contract KandelManagementRebalancingTest is MangroveTest {
     management = new KandelManagementRebalancing(
       seeder, address(WETH), address(USDC), 1, manager, MANAGEMENT_FEE, oracle, owner, guardian
     );
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                        HELPER FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Helper function to check if a whitelist proposal can be accepted (timelock has expired)
+   * @param _address The address to check
+   * @return canAccept True if the proposal exists and timelock has expired
+   * @dev Returns false if the address was not proposed or if timelock hasn't expired
+   */
+  function canAcceptWhitelist(address _address) internal view returns (bool canAccept) {
+    uint40 proposedAt = management.whitelistProposedAt(_address);
+    if (proposedAt == 0) return false;
+
+    // Get the oracle to check timelock status
+    OracleData memory oracle;
+    (oracle.isStatic, oracle.oracle, oracle.staticValue, oracle.maxDeviation, oracle.proposedAt, oracle.timelockMinutes)
+    = management.oracle();
+    return !oracle.timelocked(proposedAt);
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -113,7 +137,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted yet");
 
     // Should not be ready for acceptance yet
-    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance yet");
+    assertFalse(canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance yet");
   }
 
   function test_proposeWhitelist_onlyOwner() public {
@@ -232,7 +256,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     vm.warp(block.timestamp + 61 minutes);
 
     // Should be ready for acceptance now
-    assertTrue(management.canAcceptWhitelist(proposedAddress), "Should be ready for acceptance");
+    assertTrue(canAcceptWhitelist(proposedAddress), "Should be ready for acceptance");
 
     vm.expectEmit(true, false, false, true);
     emit KandelManagementRebalancing.WhitelistAccepted(proposedAddress);
@@ -243,7 +267,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Check final state
     assertTrue(management.isWhitelisted(proposedAddress), "Address should be whitelisted");
     assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared");
-    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should no longer be ready for acceptance");
+    assertFalse(canAcceptWhitelist(proposedAddress), "Should no longer be ready for acceptance");
   }
 
   function test_acceptWhitelist_onlyOwner() public {
@@ -344,7 +368,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Check final state
     assertFalse(management.isWhitelisted(proposedAddress), "Address should not be whitelisted");
     assertEq(management.whitelistProposedAt(proposedAddress), 0, "Proposal should be cleared");
-    assertFalse(management.canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance");
+    assertFalse(canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance");
   }
 
   function test_rejectWhitelist_onlyGuardian() public {
@@ -443,29 +467,29 @@ contract KandelManagementRebalancingTest is MangroveTest {
     address testAddress = makeAddr("testAddress");
 
     // Initially should return false
-    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false for non-proposed address");
+    assertFalse(canAcceptWhitelist(testAddress), "Should return false for non-proposed address");
 
     // After proposing, should return false until timelock expires
     vm.prank(owner);
     management.proposeWhitelist(testAddress);
-    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false immediately after proposal");
+    assertFalse(canAcceptWhitelist(testAddress), "Should return false immediately after proposal");
 
     // Just before timelock expires
     vm.warp(block.timestamp + 59 minutes);
-    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false just before timelock expires");
+    assertFalse(canAcceptWhitelist(testAddress), "Should return false just before timelock expires");
 
     // At exact timelock expiry
     vm.warp(block.timestamp + 1 minutes); // Now at 60 minutes
-    assertTrue(management.canAcceptWhitelist(testAddress), "Should return true at exact timelock expiry");
+    assertTrue(canAcceptWhitelist(testAddress), "Should return true at exact timelock expiry");
 
     // After timelock expires
     vm.warp(block.timestamp + 1 minutes); // Now at 61 minutes
-    assertTrue(management.canAcceptWhitelist(testAddress), "Should return true after timelock expires");
+    assertTrue(canAcceptWhitelist(testAddress), "Should return true after timelock expires");
 
     // After acceptance, should return false
     vm.prank(owner);
     management.acceptWhitelist(testAddress);
-    assertFalse(management.canAcceptWhitelist(testAddress), "Should return false after acceptance");
+    assertFalse(canAcceptWhitelist(testAddress), "Should return false after acceptance");
   }
 
   function test_isWhitelisted() public {
@@ -507,11 +531,11 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Verify intermediate state
     assertGt(management.whitelistProposedAt(rebalancer), 0, "Should be proposed");
     assertFalse(management.isWhitelisted(rebalancer), "Should not be whitelisted yet");
-    assertFalse(management.canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
+    assertFalse(canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
 
     // Step 2: Wait for timelock
     vm.warp(block.timestamp + 61 minutes);
-    assertTrue(management.canAcceptWhitelist(rebalancer), "Should be ready for acceptance after timelock");
+    assertTrue(canAcceptWhitelist(rebalancer), "Should be ready for acceptance after timelock");
 
     // Step 3: Owner accepts proposal
     vm.expectEmit(true, false, false, true);
@@ -523,7 +547,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Verify final state
     assertTrue(management.isWhitelisted(rebalancer), "Should be whitelisted");
     assertEq(management.whitelistProposedAt(rebalancer), 0, "Proposal should be cleared");
-    assertFalse(management.canAcceptWhitelist(rebalancer), "Should no longer be ready for acceptance");
+    assertFalse(canAcceptWhitelist(rebalancer), "Should no longer be ready for acceptance");
   }
 
   function test_canWhitelistValidation_comprehensive() public {
@@ -579,7 +603,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Verify final state
     assertFalse(management.isWhitelisted(rebalancer), "Should not be whitelisted");
     assertEq(management.whitelistProposedAt(rebalancer), 0, "Proposal should be cleared");
-    assertFalse(management.canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
+    assertFalse(canAcceptWhitelist(rebalancer), "Should not be ready for acceptance");
 
     // Step 3: Owner can propose again after rejection
     vm.prank(owner);
@@ -620,7 +644,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     assertEq(management.whitelistProposedAt(rebalancer2), 0, "Rebalancer2 proposal should be cleared");
     assertGt(management.whitelistProposedAt(rebalancer3), 0, "Rebalancer3 proposal should still exist");
 
-    assertTrue(management.canAcceptWhitelist(rebalancer3), "Rebalancer3 should be ready for acceptance");
+    assertTrue(canAcceptWhitelist(rebalancer3), "Rebalancer3 should be ready for acceptance");
   }
 
   /*//////////////////////////////////////////////////////////////

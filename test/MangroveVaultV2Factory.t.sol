@@ -12,7 +12,6 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
   address public owner;
 
   uint16 public constant MANAGEMENT_FEE = 500; // 5%
-  uint8 public constant VAULT_DECIMALS = 18;
   uint8 public constant QUOTE_OFFSET_DECIMALS = 6;
   string public constant VAULT_NAME = "Test Mangrove Vault";
   string public constant VAULT_SYMBOL = "TMV";
@@ -44,7 +43,6 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
       guardian: guardian,
       name: VAULT_NAME,
       symbol: VAULT_SYMBOL,
-      decimals: VAULT_DECIMALS,
       quoteOffsetDecimals: QUOTE_OFFSET_DECIMALS
     });
   }
@@ -68,7 +66,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     MangroveVaultV2 vault = MangroveVaultV2(deployedVault);
     assertEq(vault.name(), VAULT_NAME);
     assertEq(vault.symbol(), VAULT_SYMBOL);
-    assertEq(vault.decimals(), VAULT_DECIMALS);
+    assertEq(vault.decimals(), 18);
     assertEq(vault.manager(), manager);
   }
 
@@ -211,18 +209,16 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     assertEq(actualFee, managementFee);
   }
 
-  function testFuzz_deployVault_withDifferentDecimals(uint8 decimals, uint8 quoteOffsetDecimals) public {
-    decimals = uint8(bound(decimals, 6, 18));
+  function testFuzz_deployVault_withDifferentQuoteOffsetDecimals(uint8 quoteOffsetDecimals) public {
     quoteOffsetDecimals = uint8(bound(quoteOffsetDecimals, 0, 12));
 
     MangroveVaultV2.VaultInitParams memory params = _getDefaultVaultParams();
-    params.decimals = decimals;
     params.quoteOffsetDecimals = quoteOffsetDecimals;
 
     address vaultAddress = factory.deployVault(params);
 
     assertTrue(factory.isDeployedVault(vaultAddress));
     MangroveVaultV2 vault = MangroveVaultV2(vaultAddress);
-    assertEq(vault.decimals(), decimals);
+    assertEq(vault.decimals(), 18);
   }
 }

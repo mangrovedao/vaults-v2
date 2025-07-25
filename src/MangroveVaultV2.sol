@@ -92,9 +92,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
   /// @notice The symbol of the ERC20 token
   string internal symbol_;
 
-  /// @notice The number of decimals for the ERC20 token
-  uint8 internal immutable DECIMALS;
-
   /// @notice Offset multiplier used in initial share calculations to ensure reasonable share amounts
   uint256 internal immutable QUOTE_OFFSET;
 
@@ -115,7 +112,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    * @param guardian The guardian address (inherited from OracleRange)
    * @param name The name for the ERC20 vault token
    * @param symbol The symbol for the ERC20 vault token
-   * @param decimals The number of decimals for the ERC20 vault token
    * @param quoteOffsetDecimals The number of decimals used to calculate the quote offset multiplier
    */
   struct VaultInitParams {
@@ -130,7 +126,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     address guardian;
     string name;
     string symbol;
-    uint8 decimals;
     uint8 quoteOffsetDecimals;
   }
 
@@ -160,7 +155,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
   {
     name_ = _params.name;
     symbol_ = _params.symbol;
-    DECIMALS = _params.decimals;
     QUOTE_OFFSET = 2 * 10 ** _params.quoteOffsetDecimals;
   }
 
@@ -182,14 +176,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
    */
   function symbol() public view override returns (string memory) {
     return symbol_;
-  }
-
-  /**
-   * @notice Returns the number of decimals used for the vault token
-   * @return The number of decimals as a uint8
-   */
-  function decimals() public view override returns (uint8) {
-    return DECIMALS;
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -219,8 +205,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     if (supply == 0) {
       baseIn = baseAmountMax;
       quoteIn = quoteAmountMax;
-      Tick tick = TickLib.tickFromVolumes(quoteIn + quoteBalance, baseIn + baseBalance);
-      if (!oracle.withinDeviation(tick)) revert InvalidInitialMintAmounts();
+      if (!oracle.acceptsInitialMint(baseIn + baseBalance, quoteIn + quoteBalance)) revert InvalidInitialMintAmounts();
       sharesOut = (quoteIn + quoteBalance) * QUOTE_OFFSET;
     } else {
       uint256 sharesFromBase = baseAmountMax.fullMulDiv(supply, baseBalance);

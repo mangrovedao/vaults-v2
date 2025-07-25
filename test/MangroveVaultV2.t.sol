@@ -19,7 +19,6 @@ contract MangroveVaultV2Test is MangroveTest {
   address public feeRecipient;
 
   uint16 public constant MANAGEMENT_FEE = 500; // 5%
-  uint8 public constant VAULT_DECIMALS = 18;
   uint8 public constant QUOTE_OFFSET_DECIMALS = 0;
   string public constant VAULT_NAME = "Mangrove Vault Token";
   string public constant VAULT_SYMBOL = "MVT";
@@ -54,7 +53,6 @@ contract MangroveVaultV2Test is MangroveTest {
       guardian: guardian,
       name: VAULT_NAME,
       symbol: VAULT_SYMBOL,
-      decimals: VAULT_DECIMALS,
       quoteOffsetDecimals: QUOTE_OFFSET_DECIMALS
     });
 
@@ -85,7 +83,7 @@ contract MangroveVaultV2Test is MangroveTest {
   function test_constructor() public view {
     assertEq(vault.name(), VAULT_NAME);
     assertEq(vault.symbol(), VAULT_SYMBOL);
-    assertEq(vault.decimals(), VAULT_DECIMALS);
+    assertEq(vault.decimals(), 18);
     assertEq(vault.manager(), manager);
 
     (uint256 managementFee, address feeRecipient_, uint256 pendingFeeShares) = vault.feeData();
@@ -107,7 +105,7 @@ contract MangroveVaultV2Test is MangroveTest {
   }
 
   function test_decimals() public view {
-    assertEq(vault.decimals(), VAULT_DECIMALS);
+    assertEq(vault.decimals(), 18);
   }
 
   /*//////////////////////////////////////////////////////////////
