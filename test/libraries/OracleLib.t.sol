@@ -132,7 +132,7 @@ contract OracleLibTest is Test {
                             TICK TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_tick_static() public {
+  function test_tick_static() public view {
     OracleData memory oracle = createStaticOracle(POSITIVE_TICK, 100);
     Tick result = testContract.tick(oracle);
     assertEq(Tick.unwrap(result), Tick.unwrap(POSITIVE_TICK));
@@ -146,7 +146,7 @@ contract OracleLibTest is Test {
     assertEq(Tick.unwrap(result), Tick.unwrap(NEGATIVE_TICK));
   }
 
-  function testFuzz_tick_static(int24 tickValue) public {
+  function testFuzz_tick_static(int24 tickValue) public view {
     vm.assume(tickValue >= -887272 && tickValue <= 887272); // Valid tick range
 
     Tick inputTick = Tick.wrap(tickValue);
@@ -179,12 +179,12 @@ contract OracleLibTest is Test {
                        WITHIN DEVIATION TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_withinDeviation_exactMatch() public {
+  function test_withinDeviation_exactMatch() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertTrue(testContract.withinDeviation(oracle, ZERO_TICK));
   }
 
-  function test_withinDeviation_withinRange() public {
+  function test_withinDeviation_withinRange() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertTrue(testContract.withinDeviation(oracle, Tick.wrap(50)));
     assertTrue(testContract.withinDeviation(oracle, Tick.wrap(-50)));
@@ -192,13 +192,13 @@ contract OracleLibTest is Test {
     assertTrue(testContract.withinDeviation(oracle, Tick.wrap(-100)));
   }
 
-  function test_withinDeviation_outsideRange() public {
+  function test_withinDeviation_outsideRange() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertFalse(testContract.withinDeviation(oracle, Tick.wrap(101)));
     assertFalse(testContract.withinDeviation(oracle, Tick.wrap(-101)));
   }
 
-  function testFuzz_withinDeviation(int24 oracleTick, int24 testTick, uint16 maxDev) public {
+  function testFuzz_withinDeviation(int24 oracleTick, int24 testTick, uint16 maxDev) public view {
     vm.assume(oracleTick >= -887272 && oracleTick <= 887272);
     vm.assume(testTick >= -887272 && testTick <= 887272);
     vm.assume(maxDev <= 50000); // Reasonable max deviation
@@ -216,24 +216,24 @@ contract OracleLibTest is Test {
                           ACCEPTS TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_accepts_singleTick_exactMatch() public {
+  function test_accepts_singleTick_exactMatch() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertTrue(testContract.accepts(oracle, ZERO_TICK));
   }
 
-  function test_accepts_singleTick_withinRange() public {
+  function test_accepts_singleTick_withinRange() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(1000), 100);
     assertTrue(testContract.accepts(oracle, Tick.wrap(900))); // oracle - tick = 100
     assertTrue(testContract.accepts(oracle, Tick.wrap(1000))); // oracle - tick = 0
   }
 
-  function test_accepts_singleTick_outsideRange() public {
+  function test_accepts_singleTick_outsideRange() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(1000), 100);
     assertFalse(testContract.accepts(oracle, Tick.wrap(899))); // oracle - tick = 101 (outside since worst price)
     assertTrue(testContract.accepts(oracle, Tick.wrap(1001))); // oracle - tick = -1 (within since better price)
   }
 
-  function testFuzz_accepts_singleTick(int24 oracleTick, int24 testTick, uint16 maxDev) public {
+  function testFuzz_accepts_singleTick(int24 oracleTick, int24 testTick, uint16 maxDev) public view {
     vm.assume(oracleTick >= -887272 && oracleTick <= 887272);
     vm.assume(testTick >= -887272 && testTick <= 887272);
     vm.assume(maxDev <= 50000);
@@ -245,22 +245,22 @@ contract OracleLibTest is Test {
     assertEq(result, expectedResult);
   }
 
-  function test_accepts_doubleTick_withinRange() public {
+  function test_accepts_doubleTick_withinRange() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(1000), 100);
     assertTrue(testContract.acceptsTwo(oracle, Tick.wrap(900), Tick.wrap(-900))); // Both within range
   }
 
-  function test_accepts_doubleTick_askOutsideRange() public {
+  function test_accepts_doubleTick_askOutsideRange() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(1000), 100);
     assertFalse(testContract.acceptsTwo(oracle, Tick.wrap(899), Tick.wrap(-900))); // Ask outside range
   }
 
-  function test_accepts_doubleTick_bidOutsideRange() public {
+  function test_accepts_doubleTick_bidOutsideRange() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(1000), 100);
     assertFalse(testContract.acceptsTwo(oracle, Tick.wrap(900), Tick.wrap(-1101))); // Bid outside range (-oracle - bid = -1000 - (-1101) = 101)
   }
 
-  function testFuzz_accepts_doubleTick(int24 oracleTick, int24 askTick, int24 bidTick, uint16 maxDev) public {
+  function testFuzz_accepts_doubleTick(int24 oracleTick, int24 askTick, int24 bidTick, uint16 maxDev) public view {
     vm.assume(oracleTick >= -887272 && oracleTick <= 887272);
     vm.assume(askTick >= -887272 && askTick <= 887272);
     vm.assume(bidTick >= -887272 && bidTick <= 887272);
@@ -309,7 +309,7 @@ contract OracleLibTest is Test {
     assertFalse(testContract.timelocked(oracle, startTime)); // Should be unlocked
   }
 
-  function test_timelocked_futureStart() public {
+  function test_timelocked_futureStart() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     oracle.timelockMinutes = 60;
 
@@ -344,7 +344,7 @@ contract OracleLibTest is Test {
                           IS VALID TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_isValid_static_validTick() public {
+  function test_isValid_static_validTick() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertTrue(testContract.isValid(oracle));
 
@@ -355,7 +355,7 @@ contract OracleLibTest is Test {
     assertTrue(testContract.isValid(oracle));
   }
 
-  function test_isValid_static_invalidTick() public {
+  function test_isValid_static_invalidTick() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(887273), 100); // Out of range
     assertFalse(testContract.isValid(oracle));
 
@@ -375,12 +375,12 @@ contract OracleLibTest is Test {
     assertFalse(testContract.isValid(oracle));
   }
 
-  function test_isValid_dynamic_noCode() public {
+  function test_isValid_dynamic_noCode() public view {
     OracleData memory oracle = createDynamicOracle(IOracle(address(0x1234)), 100);
     assertFalse(testContract.isValid(oracle)); // No code at address
   }
 
-  function testFuzz_isValid_static(int24 tickValue) public {
+  function testFuzz_isValid_static(int24 tickValue) public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(tickValue), 100);
     bool result = testContract.isValid(oracle);
 
@@ -392,7 +392,7 @@ contract OracleLibTest is Test {
                       ACCEPTS TRADE TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_acceptsTrade_sell() public {
+  function test_acceptsTrade_sell() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(0), 1000);
 
     // Test a sell trade: selling 1 ether for 1 USDC (both 18 decimals)
@@ -401,7 +401,7 @@ contract OracleLibTest is Test {
     assertTrue(testContract.acceptsTrade(oracle, true, received, sent));
   }
 
-  function test_acceptsTrade_buy() public {
+  function test_acceptsTrade_buy() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(0), 1000);
 
     // Test a buy trade: buying 1 ether with 1 USDC (both 18 decimals)
@@ -414,7 +414,7 @@ contract OracleLibTest is Test {
                     ACCEPTS INITIAL MINT TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_acceptsInitialMint_validRatio() public {
+  function test_acceptsInitialMint_validRatio() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(0), 1000);
 
     // Test initial mint with 1:1 ratio
@@ -423,7 +423,7 @@ contract OracleLibTest is Test {
     assertTrue(testContract.acceptsInitialMint(oracle, baseAmount, quoteAmount));
   }
 
-  function test_acceptsInitialMint_extremeRatio() public {
+  function test_acceptsInitialMint_extremeRatio() public view {
     OracleData memory oracle = createStaticOracle(Tick.wrap(0), 100);
 
     // Test with extreme ratio that might be outside deviation
@@ -439,7 +439,7 @@ contract OracleLibTest is Test {
                         EDGE CASE TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_edgeCase_zeroDeviation() public {
+  function test_edgeCase_zeroDeviation() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 0);
 
     assertTrue(testContract.accepts(oracle, ZERO_TICK));
@@ -447,7 +447,7 @@ contract OracleLibTest is Test {
     assertFalse(testContract.accepts(oracle, Tick.wrap(-1))); // cheaper ask so should not work
   }
 
-  function test_edgeCase_zeroTimelock() public {
+  function test_edgeCase_zeroTimelock() public view {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     oracle.timelockMinutes = 0;
 

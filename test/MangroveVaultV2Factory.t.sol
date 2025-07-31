@@ -101,7 +101,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
                       VIEW FUNCTION TESTS
   //////////////////////////////////////////////////////////////*/
 
-  function test_getDeployedVaultCount_empty() public {
+  function test_getDeployedVaultCount_empty() public view {
     assertEq(factory.getDeployedVaultCount(), 0);
   }
 
@@ -116,7 +116,7 @@ contract MangroveVaultV2FactoryTest is MangroveTest {
     factory.getDeployedVault(1);
   }
 
-  function test_getAllDeployedVaults_empty() public {
+  function test_getAllDeployedVaults_empty() public view {
     address[] memory vaults = factory.getAllDeployedVaults();
     assertEq(vaults.length, 0);
   }

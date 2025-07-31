@@ -282,23 +282,26 @@ contract MangroveVaultV2Test is MangroveTest {
   //////////////////////////////////////////////////////////////*/
 
   function test_burn_emitsSentTokensEvent() public {
+    uint256 baseMint = 1 ether;
+    uint256 quoteMint = 2000e6;
+
     // Setup: mint first
     vm.prank(user1);
-    (uint256 sharesOut,,) = vault.mint(user1, 1 ether, 2000e6, 0);
+    (uint256 sharesOut,,) = vault.mint(user1, baseMint, quoteMint, 0);
+    uint256 supply = vault.totalSupply();
 
     uint256 sharesToBurn = sharesOut / 2;
 
     // Calculate expected amounts and balances
-    uint256 expectedBaseOut = 0.5 ether;
-    uint256 expectedQuoteOut = 1000e6;
-    uint256 expectedBaseBalance = 0.5 ether;
-    uint256 expectedQuoteBalance = 1000e6;
+    uint256 expectedBaseOut = baseMint * sharesToBurn / supply;
+    uint256 expectedQuoteOut = quoteMint * sharesToBurn / supply;
+    uint256 expectedBaseBalance = baseMint - expectedBaseOut;
+    uint256 expectedQuoteBalance = quoteMint - expectedQuoteOut;
 
-    // TODO: check here we seem to have accrued fees which should not happen
-    // vm.expectEmit(false, false, false, true);
-    // emit ERC20.Transfer(user1, address(0), sharesToBurn);
-    // vm.expectEmit(false, false, false, true);
-    // emit MangroveVaultV2.SentTokens(expectedBaseOut, expectedQuoteOut, expectedBaseBalance, expectedQuoteBalance);
+    vm.expectEmit(false, false, false, true);
+    emit ERC20.Transfer(user1, address(0), sharesToBurn);
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.SentTokens(expectedBaseOut, expectedQuoteOut, expectedBaseBalance, expectedQuoteBalance);
 
     vm.prank(user1);
     vault.burn(user1, user1, sharesToBurn, 0, 0);
@@ -307,7 +310,7 @@ contract MangroveVaultV2Test is MangroveTest {
   function test_burn_emitsSentTokensEvent_multipleUsers() public {
     // Setup: two users mint
     vm.prank(user1);
-    (uint256 shares1,,) = vault.mint(user1, 1 ether, 2000e6, 0);
+    vault.mint(user1, 1 ether, 2000e6, 0);
 
     vm.prank(user2);
     (uint256 shares2,,) = vault.mint(user2, 0.5 ether, 1000e6, 0);
@@ -827,7 +830,7 @@ contract MangroveVaultV2Test is MangroveTest {
     vault.setPaused(true);
 
     // View functions should still work when paused
-    (uint256 managementFee, address feeRecipient_, uint256 pendingFeeShares) = vault.feeData();
+    (uint256 managementFee, address feeRecipient_,) = vault.feeData();
     assertEq(managementFee, MANAGEMENT_FEE);
     assertEq(feeRecipient_, owner);
 
