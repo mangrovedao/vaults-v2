@@ -324,7 +324,7 @@ contract KandelManagement is OracleRange {
     uint256 baseAmount,
     uint256 quoteAmount,
     bool withdrawProvisions,
-    address payable recipient
+    address recipient
   ) external onlyManager {
     KANDEL.retractAndWithdraw(
       from, to, baseAmount, quoteAmount, withdrawProvisions ? type(uint256).max : 0, payable(address(this))
@@ -336,7 +336,7 @@ contract KandelManagement is OracleRange {
       }
     }
     if (withdrawProvisions) {
-      recipient.call{value: address(this).balance}("");
+      recipient.safeTransferAllETH();
     }
   }
 

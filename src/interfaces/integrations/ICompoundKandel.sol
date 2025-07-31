@@ -30,4 +30,18 @@ interface ICompoundKandel {
    * @return quoteMarket The address of the Compound market for the quote token
    */
   function currentMarkets() external view returns (address baseMarket, address quoteMarket);
+
+  /**
+   * @notice Accrues interest for the Compound markets.
+   * @dev This function is called by the vault to accrue interest for the Compound markets.
+   * @dev it must be always called to get the latest balance update on state changing functions.
+   */
+  function accrueInterest(address token) external returns (uint256);
+
+  /**
+   * @notice Claims rewards from the Compound markets (sepcific to takara integration).
+   * @dev This function is called by the vault to claim rewards from the Compound markets.
+   * @dev it must be always called to get the latest balance update on state changing functions.
+   */
+  function claimReward() external;
 }

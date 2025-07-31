@@ -290,6 +290,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     returns (uint256 sharesOut, uint256 baseIn, uint256 quoteIn)
   {
     _checkPaused();
+    _onBeforeMint();
     (sharesOut, baseIn, quoteIn) = getMintAmounts(baseAmountMax, quoteAmountMax);
     if (sharesOut < minSharesOut) revert InsufficientSharesOut();
     _accrueFees();
@@ -330,6 +331,7 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     returns (uint256 baseOut, uint256 quoteOut)
   {
     _checkPaused();
+    _onBeforeBurn();
     _accrueFees();
     if (from != msg.sender) {
       _spendAllowance(from, msg.sender, shares);
@@ -465,4 +467,24 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
   function _checkPaused() internal view {
     if (state.paused) revert Paused();
   }
+
+  /**
+   * @notice Hook function called before minting vault shares
+   * @dev This is a virtual function that can be overridden by inheriting contracts
+   *      to implement custom logic that should be executed before the mint operation.
+   *      Called after paused state check but before calculating mint amounts and
+   *      transferring tokens. The function is executed in the context of the mint
+   *      transaction, so it has access to msg.sender and other transaction data.
+   */
+  function _onBeforeMint() internal virtual {}
+
+  /**
+   * @notice Hook function called before burning vault shares
+   * @dev This is a virtual function that can be overridden by inheriting contracts
+   *      to implement custom logic that should be executed before the burn operation.
+   *      Called after paused state check but before accruing fees, checking allowance,
+   *      and burning shares. The function is executed in the context of the burn
+   *      transaction, so it has access to msg.sender and other transaction data.
+   */
+  function _onBeforeBurn() internal virtual {}
 }
