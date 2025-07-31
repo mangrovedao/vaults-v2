@@ -376,7 +376,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The amount of quote tokens in the management contract
    * @dev These are tokens that are not yet deposited into the Kandel strategy
    */
-  function vaultBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function vaultBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     baseBalance = BASE.balanceOf(address(this));
     quoteBalance = QUOTE.balanceOf(address(this));
   }
@@ -387,7 +387,7 @@ contract KandelManagement is OracleRange {
    * @return quoteBalance The amount of quote tokens in the Kandel strategy
    * @dev These are tokens actively used by the Kandel strategy for market making
    */
-  function kandelBalances() external view returns (uint256 baseBalance, uint256 quoteBalance) {
+  function kandelBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
     // Ask offers sell base tokens, so reserveBalance for asks returns base token balance
     baseBalance = KANDEL.reserveBalance(OfferType.Ask);
     // Bid offers sell quote tokens, so reserveBalance for bids returns quote token balance
@@ -401,8 +401,8 @@ contract KandelManagement is OracleRange {
    * @dev This represents the total underlying assets controlled by this management contract
    */
   function totalBalances() public view returns (uint256 baseBalance, uint256 quoteBalance) {
-    (uint256 vaultBase, uint256 vaultQuote) = this.vaultBalances();
-    (uint256 kandelBase, uint256 kandelQuote) = this.kandelBalances();
+    (uint256 vaultBase, uint256 vaultQuote) = vaultBalances();
+    (uint256 kandelBase, uint256 kandelQuote) = kandelBalances();
 
     baseBalance = vaultBase + kandelBase;
     quoteBalance = vaultQuote + kandelQuote;
