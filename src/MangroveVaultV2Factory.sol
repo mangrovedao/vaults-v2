@@ -30,7 +30,7 @@ contract MangroveVaultV2Factory {
    * @param vault The address of the deployed vault contract
    * @param params The initialization parameters used to create the vault
    */
-  event VaultDeployed(address vault, MangroveVaultV2.VaultInitParams params);
+  event VaultDeployed(address vault, address kandel, MangroveVaultV2.VaultInitParams params);
 
   /*//////////////////////////////////////////////////////////////
                         STATE VARIABLES
@@ -59,7 +59,7 @@ contract MangroveVaultV2Factory {
     _deployedVaults.add(vault);
 
     // Emit deployment event with parameters
-    emit VaultDeployed(vault, params);
+    emit VaultDeployed(vault, address(MangroveVaultV2(vault).KANDEL()), params);
 
     return vault;
   }
