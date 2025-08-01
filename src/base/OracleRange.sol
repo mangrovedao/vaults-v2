@@ -75,19 +75,6 @@ contract OracleRange is Ownable {
   address public guardian;
 
   /*//////////////////////////////////////////////////////////////
-                           MODIFIERS
-  //////////////////////////////////////////////////////////////*/
-
-  /**
-   * @notice Restricts function access to the guardian only
-   * @dev Reverts with NotGuardian if caller is not the guardian
-   */
-  modifier onlyGuardian() {
-    if (msg.sender != guardian) revert NotGuardian();
-    _;
-  }
-
-  /*//////////////////////////////////////////////////////////////
                           CONSTRUCTOR
   //////////////////////////////////////////////////////////////*/
 
@@ -125,6 +112,14 @@ contract OracleRange is Ownable {
    */
   function _guardInitializeOwner() internal pure override returns (bool) {
     return true;
+  }
+
+  /**
+   * @notice Internal function to check if the caller is the guardian
+   * @dev Reverts with NotGuardian if caller is not the guardian
+   */
+  function _checkGuardian() internal view {
+    if (msg.sender != guardian) revert NotGuardian();
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -166,7 +161,8 @@ contract OracleRange is Ownable {
    * @dev Only guardian can reject. Clears the proposed oracle and emits RejectedOracle event
    * @dev Guardian can reject at any time during the timelock period
    */
-  function rejectOracle() external onlyGuardian {
+  function rejectOracle() external {
+    _checkGuardian();
     OracleData memory _oracle = proposedOracle;
     delete proposedOracle; // Clear the proposed oracle
     emit RejectedOracle(keccak256(abi.encode(_oracle)));
@@ -178,7 +174,8 @@ contract OracleRange is Ownable {
    * @dev Only the current guardian can designate a new guardian
    * @dev The new guardian will have the ability to reject oracle proposals
    */
-  function setGuardian(address newGuardian) external onlyGuardian {
+  function setGuardian(address newGuardian) external {
+    _checkGuardian();
     address oldGuardian = guardian;
     guardian = newGuardian;
     emit GuardianChanged(oldGuardian, newGuardian);

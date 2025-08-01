@@ -11,6 +11,7 @@ import {
   OracleData,
   OracleLib
 } from "../../src/base/KandelManagement.sol";
+import {Ownable} from "lib/solady/src/auth/Ownable.sol";
 import {MangroveTest, MockERC20} from "./MangroveTest.t.sol";
 
 /**
@@ -371,26 +372,21 @@ contract KandelManagementRebalancingTest is MangroveTest {
     assertFalse(canAcceptWhitelist(proposedAddress), "Should not be ready for acceptance");
   }
 
-  function test_rejectWhitelist_onlyGuardian() public {
+  function test_rejectWhitelist_onlyGuardianOrOwner() public {
     address proposedAddress = makeAddr("proposedAddress");
 
     // Propose the address
     vm.prank(owner);
     management.proposeWhitelist(proposedAddress);
 
-    // Test that owner cannot reject
-    vm.prank(owner);
-    vm.expectRevert(OracleRange.NotGuardian.selector);
-    management.rejectWhitelist(proposedAddress);
-
     // Test that manager cannot reject
     vm.prank(manager);
-    vm.expectRevert(OracleRange.NotGuardian.selector);
+    vm.expectRevert(Ownable.Unauthorized.selector);
     management.rejectWhitelist(proposedAddress);
 
     // Test that random address cannot reject
     vm.prank(makeAddr("randomUser"));
-    vm.expectRevert(OracleRange.NotGuardian.selector);
+    vm.expectRevert(Ownable.Unauthorized.selector);
     management.rejectWhitelist(proposedAddress);
 
     // Verify proposal still exists

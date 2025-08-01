@@ -65,7 +65,8 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   event WhitelistAccepted(address indexed _address);
 
   /**
-   * @notice Emitted when a proposed address is rejected by the guardian
+   * @notice Emitted when a proposed address is rejected by the guardian or owner
+   * @dev Can also be emitted when an address is removed from the whitelist by the guardian or owner
    * @param _address The address that was rejected
    */
   event WhitelistRejected(address indexed _address);
@@ -225,12 +226,13 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @param _address The address to propose for whitelisting
    * @dev Only owner can propose addresses. The proposal must go through a timelock period
    *      before it can be accepted. Guardian can reject during the timelock period.
-   * @dev Reverts with AlreadyProposed if the address is already proposed
+   * @dev Reverts with AlreadyProposed if the address is already proposed or whitelisted
    */
   function proposeWhitelist(address _address) external onlyOwner {
     if (!_canWhitelist(_address)) revert InvalidWhitelistAddress();
     uint40 existing = whitelistProposedAt[_address];
-    if (existing > 0) revert AlreadyProposed();
+    bool isWhitelisted_ = isWhitelisted[_address];
+    if (existing > 0 || isWhitelisted_) revert AlreadyProposed();
     whitelistProposedAt[_address] = uint40(block.timestamp);
     emit WhitelistProposed(_address);
   }
@@ -258,17 +260,20 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   }
 
   /**
-   * @notice Rejects a proposed address and removes it from consideration
+   * @notice Rejects a proposed address and removes it from consideration or from the whitelist
    * @param _address The address to reject
    * @dev Only guardian can reject proposals. This clears the proposal without
    *      adding the address to the whitelist. Guardian can reject at any time
    *      during the timelock period.
    * @dev Reverts with NotProposed if the address was not proposed
    */
-  function rejectWhitelist(address _address) external onlyGuardian {
+  function rejectWhitelist(address _address) external {
+    if (msg.sender != guardian) _checkOwner();
     uint40 existing = whitelistProposedAt[_address];
-    if (existing == 0) revert NotProposed();
-    delete whitelistProposedAt[_address];
+    bool isWhitelisted_ = isWhitelisted[_address];
+    if (existing == 0 && !isWhitelisted_) revert NotProposed();
+    if (existing > 0) delete whitelistProposedAt[_address];
+    if (isWhitelisted_) delete isWhitelisted[_address];
     emit WhitelistRejected(_address);
   }
 
