@@ -212,12 +212,12 @@ contract MangroveVaultV2Test is MangroveTest {
     uint256 baseAmount = 1 ether;
     uint256 quoteAmount = 2000e6;
 
+    vm.expectEmit(false, false, false, true);
+    emit MangroveVaultV2.ReceivedTokens(baseAmount, quoteAmount, baseAmount, quoteAmount);
     vm.expectEmit(true, true, false, true);
     emit ERC20.Transfer(address(0), address(vault), 1e3);
     vm.expectEmit(true, true, false, true);
     emit ERC20.Transfer(address(0), user1, quoteAmount * (2 * 10 ** QUOTE_OFFSET_DECIMALS));
-    vm.expectEmit(false, false, false, true);
-    emit MangroveVaultV2.ReceivedTokens(baseAmount, quoteAmount, baseAmount, quoteAmount);
 
     vm.prank(user1);
     (uint256 sharesOut, uint256 baseIn, uint256 quoteIn) = vault.mint(user1, baseAmount, quoteAmount, 0);
@@ -299,9 +299,9 @@ contract MangroveVaultV2Test is MangroveTest {
     uint256 expectedQuoteBalance = quoteMint - expectedQuoteOut;
 
     vm.expectEmit(false, false, false, true);
-    emit ERC20.Transfer(user1, address(0), sharesToBurn);
-    vm.expectEmit(false, false, false, true);
     emit MangroveVaultV2.SentTokens(expectedBaseOut, expectedQuoteOut, expectedBaseBalance, expectedQuoteBalance);
+    vm.expectEmit(false, false, false, true);
+    emit ERC20.Transfer(user1, address(0), sharesToBurn);
 
     vm.prank(user1);
     vault.burn(user1, user1, sharesToBurn, 0, 0);

@@ -298,6 +298,10 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     BASE.safeTransferFrom(msg.sender, address(this), baseIn);
     QUOTE.safeTransferFrom(msg.sender, address(this), quoteIn);
 
+    // Emit received tokens event with current balances
+    (uint256 totalBaseBalance, uint256 totalQuoteBalance) = totalBalances();
+    emit ReceivedTokens(baseIn, quoteIn, totalBaseBalance, totalQuoteBalance);
+
     if (totalSupply() == 0) {
       _mint(address(this), MINIMUM_LIQUIDITY);
     }
@@ -305,10 +309,6 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     _mint(to, sharesOut);
 
     if (state.inKandel) _sendTokenToKandel();
-
-    // Emit received tokens event with current balances
-    (uint256 totalBaseBalance, uint256 totalQuoteBalance) = totalBalances();
-    emit ReceivedTokens(baseIn, quoteIn, totalBaseBalance, totalQuoteBalance);
   }
 
   /**
@@ -344,11 +344,13 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     quoteOut = shares.mulDiv(quoteBalance, supply);
     if (baseOut < minBaseOut) revert BurnSlippageExceeded();
     if (quoteOut < minQuoteOut) revert BurnSlippageExceeded();
-    _burn(from, shares);
+
     (baseOut, quoteOut) = _sendTokensTo(baseOut, quoteOut, receiver);
 
     // Emit sent tokens event with current balances
     emit SentTokens(baseOut, quoteOut, baseBalance - baseOut, quoteBalance - quoteOut);
+
+    _burn(from, shares);
   }
 
   /*//////////////////////////////////////////////////////////////
