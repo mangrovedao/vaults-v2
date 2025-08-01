@@ -75,8 +75,8 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    * @notice Emitted when a rebalancing operation is performed
    * @param target The target contract for rebalancing
    * @param isSell True if selling base token for quote token, false if buying base token with quote token
-   * @param amountIn The amount of tokens sent in the swap
-   * @param amountOut The amount of tokens received from the swap
+   * @param amountIn The amount of tokens received in the swap
+   * @param amountOut The amount of tokens sent in the swap
    * @param baseBalanceAfter The balance of the base token after the rebalancing operation
    * @param quoteBalanceAfter The balance of the quote token after the rebalancing operation
    */
