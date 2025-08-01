@@ -71,6 +71,24 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
    */
   event WhitelistRejected(address indexed _address);
 
+  /**
+   * @notice Emitted when a rebalancing operation is performed
+   * @param target The target contract for rebalancing
+   * @param isSell True if selling base token for quote token, false if buying base token with quote token
+   * @param amountIn The amount of tokens sent in the swap
+   * @param amountOut The amount of tokens received from the swap
+   * @param baseBalanceAfter The balance of the base token after the rebalancing operation
+   * @param quoteBalanceAfter The balance of the quote token after the rebalancing operation
+   */
+  event Rebalanced(
+    address indexed target,
+    bool isSell,
+    uint256 amountIn,
+    uint256 amountOut,
+    uint256 baseBalanceAfter,
+    uint256 quoteBalanceAfter
+  );
+
   /*//////////////////////////////////////////////////////////////
                         STATE VARIABLES
   //////////////////////////////////////////////////////////////*/
@@ -215,6 +233,12 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
 
     // send the tokens to the kandel if needed
     if (state.inKandel) _sendTokenToKandel();
+
+    // get the total balance after the rebalancing operation
+    (uint256 baseBalanceAfter, uint256 quoteBalanceAfter) = totalBalances();
+
+    // emit the event
+    emit Rebalanced(_params.target, _params.isSell, received, sent, baseBalanceAfter, quoteBalanceAfter);
   }
 
   /*//////////////////////////////////////////////////////////////
