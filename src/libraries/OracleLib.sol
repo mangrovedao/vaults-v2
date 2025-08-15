@@ -101,13 +101,16 @@ library OracleLib {
    *      This ensures trading positions respect oracle-defined price bounds.
    */
   function accepts(OracleData memory self, Tick askTick, Tick bidTick) internal view returns (bool) {
-    int256 oracleTick = Tick.unwrap(self.tick());
-    int256 askTick_ = Tick.unwrap(askTick);
-    int256 bidTick_ = Tick.unwrap(bidTick);
+    // can be unchecked because oracle tick and ticks are 24 bits integers and we will do 256 bit math
+    unchecked {
+      int256 oracleTick = Tick.unwrap(self.tick());
+      int256 askTick_ = Tick.unwrap(askTick);
+      int256 bidTick_ = Tick.unwrap(bidTick);
 
-    // Check if both ask and bid are within acceptable deviation from oracle price
-    return oracleTick - askTick_ <= int256(uint256(self.maxDeviation))
-      && -oracleTick - bidTick_ <= int256(uint256(self.maxDeviation));
+      // Check if both ask and bid are within acceptable deviation from oracle price
+      return oracleTick - askTick_ <= int256(uint256(self.maxDeviation))
+        && -oracleTick - bidTick_ <= int256(uint256(self.maxDeviation));
+    }
   }
 
   /**
