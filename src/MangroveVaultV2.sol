@@ -250,8 +250,8 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     } else {
       sharesOut =
         FixedPointMathLib.min(baseAmountMax.mulDiv(supply, baseBalance), quoteAmountMax.mulDiv(supply, quoteBalance));
-      baseIn = sharesOut.mulDiv(baseBalance, supply);
-      quoteIn = sharesOut.mulDiv(quoteBalance, supply);
+      baseIn = sharesOut.mulDivUp(baseBalance, supply);
+      quoteIn = sharesOut.mulDivUp(quoteBalance, supply);
     }
   }
 
