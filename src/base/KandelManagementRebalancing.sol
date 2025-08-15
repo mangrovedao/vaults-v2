@@ -48,6 +48,9 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
   /// @notice Thrown when the trade tick is outside the oracle's acceptable range
   error InvalidTradeTick();
 
+  /// @notice Thrown when the trade slippage is too high
+  error SlippageExceeded();
+
   /*//////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
@@ -222,6 +225,9 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     // get the amount of token we sent (if underflow, it means we received which is not expected)
     uint256 finalSentBalance = sellToken.balanceOf(address(this));
     received = buyToken.balanceOf(address(this)) - received;
+
+    // check if the amount received is greater than the minimum amount out
+    if (received < _params.minAmountOut) revert SlippageExceeded();
 
     if (finalSentBalance < sellBalance) {
       sent = sellBalance - finalSentBalance;
