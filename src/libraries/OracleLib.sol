@@ -20,7 +20,7 @@ import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 struct OracleData {
   bool isStatic; // 8 bits
   IOracle oracle; // 160 bits + 8 bits = 168 bits
-  Tick staticValue; // 24 bits + 168 bits = 192 bits
+  int24 staticValue; // 24 bits + 168 bits = 192 bits
   uint16 maxDeviation; // 16 bits + 192 bits = 208 bits
   uint40 proposedAt; // 40 bits + 208 bits = 248 bits
   uint8 timelockMinutes; // 8 bits + 248 bits = 256 bits
@@ -51,7 +51,7 @@ library OracleLib {
    */
   function tick(OracleData memory self) internal view returns (Tick) {
     if (self.isStatic) {
-      return self.staticValue;
+      return Tick.wrap(self.staticValue);
     }
     return self.oracle.tick();
   }
@@ -67,10 +67,12 @@ library OracleLib {
    * @dev May revert if the oracle call fails when querying external oracles
    */
   function withinDeviation(OracleData memory self, Tick _tick) internal view returns (bool) {
-    int256 tick_ = Tick.unwrap(_tick);
-    int256 oracleTick = Tick.unwrap(self.tick());
-    uint256 distance = FixedPointMathLib.dist(oracleTick, tick_);
-    return distance <= uint256(self.maxDeviation);
+    unchecked {
+      int256 tick_ = Tick.unwrap(_tick);
+      int256 oracleTick = Tick.unwrap(self.tick());
+      uint256 distance = FixedPointMathLib.dist(oracleTick, tick_);
+      return distance <= uint256(self.maxDeviation);
+    }
   }
 
   /**
@@ -83,10 +85,12 @@ library OracleLib {
    * @dev This means it accepts ticks that are at most maxDeviation below the oracle tick
    */
   function accepts(OracleData memory self, Tick _tick) internal view returns (bool) {
-    int256 tick_ = Tick.unwrap(_tick);
-    int256 oracleTick = Tick.unwrap(self.tick());
+    unchecked {
+      int256 tick_ = Tick.unwrap(_tick);
+      int256 oracleTick = Tick.unwrap(self.tick());
 
-    return oracleTick - tick_ <= int256(uint256(self.maxDeviation));
+      return oracleTick - tick_ <= int256(uint256(self.maxDeviation));
+    }
   }
 
   /**
@@ -123,12 +127,14 @@ library OracleLib {
    *      - Time elapsed since start is less than timelockMinutes * 60 seconds
    *      This prevents immediate oracle changes and provides time for guardians to review proposals.
    */
-  function timelocked(OracleData memory self, uint40 start) internal view returns (bool) {
-    uint40 date = uint40(block.timestamp);
-    // Handle edge case where current time is before start time
-    if (date < start) return true;
-    // Check if timelock period has elapsed
-    return date - start < uint40(self.timelockMinutes) * 60;
+  function timelocked(OracleData memory self, uint256 start) internal view returns (bool) {
+    unchecked {
+      uint256 date = block.timestamp;
+      // Handle edge case where current time is before start time
+      if (date < start) return true;
+      // Check if timelock period has elapsed
+      return date - start < uint256(self.timelockMinutes) * 60;
+    }
   }
 
   /**
@@ -142,22 +148,24 @@ library OracleLib {
    *      This function is useful for validating oracle configurations before deployment.
    */
   function isValid(OracleData memory self) internal view returns (bool) {
-    if (self.isStatic) {
-      // For static oracles, just check if the static value is in valid range
-      return self.staticValue.inRange();
-    }
+    unchecked {
+      if (self.isStatic) {
+        // For static oracles, just check if the static value is in valid range
+        return Tick.wrap(self.staticValue).inRange();
+      }
 
-    // Check if oracle code size is greater than 0
-    if (address(self.oracle).code.length == 0) {
-      return false;
-    }
+      // Check if oracle code size is greater than 0
+      if (address(self.oracle).code.length == 0) {
+        return false;
+      }
 
-    // For dynamic oracles, try to query the oracle and validate the result
-    try self.oracle.tick() returns (Tick oracleTick) {
-      return oracleTick.inRange();
-    } catch {
-      // Oracle call failed, return false
-      return false;
+      // For dynamic oracles, try to query the oracle and validate the result
+      try self.oracle.tick() returns (Tick oracleTick) {
+        return oracleTick.inRange();
+      } catch {
+        // Oracle call failed, return false
+        return false;
+      }
     }
   }
 
@@ -180,7 +188,6 @@ library OracleLib {
     int256 tradeTick = Tick.unwrap(TickLib.tickFromVolumes(received, sent));
     int256 oracleTick = Tick.unwrap(self.tick());
     if (!isSell) oracleTick = -oracleTick;
-
     return oracleTick - tradeTick <= int256(uint256(self.maxDeviation));
   }
 

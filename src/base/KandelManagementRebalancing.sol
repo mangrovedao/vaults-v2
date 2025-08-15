@@ -9,6 +9,7 @@ import {AbstractKandelSeeder} from
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
 import {LibCall} from "lib/solady/src/utils/LibCall.sol";
 import {ReentrancyGuardTransient} from "lib/solady/src/utils/ReentrancyGuardTransient.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 /**
  * @title KandelManagementRebalancing
@@ -203,11 +204,13 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     if (!isWhitelisted[_params.target]) revert InvalidRebalanceAddress();
     // take the tokens from the kandel
     KANDEL.withdrawFunds(
-      _params.isSell ? _params.amountInKandel : 0, _params.isSell ? 0 : _params.amountInKandel, address(this)
+      FixedPointMathLib.ternary(_params.isSell, _params.amountInKandel, 0),
+      FixedPointMathLib.ternary(_params.isSell, 0, _params.amountInKandel),
+      address(this)
     );
 
-    address sellToken = _params.isSell ? BASE : QUOTE;
-    address buyToken = _params.isSell ? QUOTE : BASE;
+    address sellToken = FixedPointMathLib.ternary(_params.isSell, BASE, QUOTE);
+    address buyToken = FixedPointMathLib.ternary(_params.isSell, QUOTE, BASE);
 
     // take a snapshot of the balances
     uint256 sellBalance = sellToken.balanceOf(address(this));
@@ -230,8 +233,10 @@ contract KandelManagementRebalancing is KandelManagement, ReentrancyGuardTransie
     if (received < _params.minAmountOut) revert SlippageExceeded();
 
     if (finalSentBalance < sellBalance) {
-      sent = sellBalance - finalSentBalance;
-      if (!oracle.acceptsTrade(_params.isSell, received, sent)) revert InvalidTradeTick();
+      unchecked {
+        sent = sellBalance - finalSentBalance;
+        if (!oracle.acceptsTrade(_params.isSell, received, sent)) revert InvalidTradeTick();
+      }
     }
 
     // remove allowance

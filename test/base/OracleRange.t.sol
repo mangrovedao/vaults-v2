@@ -59,7 +59,7 @@ contract OracleRangeTest is Test {
 
     OracleData memory initialOracle;
     initialOracle.isStatic = true;
-    initialOracle.staticValue = Tick.wrap(100);
+    initialOracle.staticValue = int24(100);
     initialOracle.maxDeviation = 100;
     initialOracle.timelockMinutes = 60; // 1 hour
 
@@ -72,7 +72,7 @@ contract OracleRangeTest is Test {
 
   function test_proposeOracle() public {
     OracleData memory newOracle;
-    newOracle.staticValue = Tick.wrap(200);
+    newOracle.staticValue = int24(200);
     newOracle.maxDeviation = 150;
     newOracle.isStatic = true;
     newOracle.timelockMinutes = 120;
@@ -99,7 +99,7 @@ contract OracleRangeTest is Test {
   function test_proposeOracle_invalidStaticOracle() public {
     OracleData memory invalidOracle;
     invalidOracle.isStatic = true;
-    invalidOracle.staticValue = Tick.wrap(type(int24).max); // Invalid tick value (out of range)
+    invalidOracle.staticValue = int24(type(int24).max); // Invalid tick value (out of range)
     invalidOracle.timelockMinutes = 60;
 
     vm.prank(owner);
@@ -121,7 +121,7 @@ contract OracleRangeTest is Test {
   function test_proposeOracle_validStaticOracle() public {
     OracleData memory validOracle;
     validOracle.isStatic = true;
-    validOracle.staticValue = Tick.wrap(1000); // Valid tick value
+    validOracle.staticValue = int24(1000); // Valid tick value
     validOracle.timelockMinutes = 60;
     validOracle.proposedAt = uint40(block.timestamp);
 
@@ -141,7 +141,7 @@ contract OracleRangeTest is Test {
 
   function test_acceptOracle_afterTimelock() public {
     OracleData memory newOracle;
-    newOracle.staticValue = Tick.wrap(300);
+    newOracle.staticValue = int24(300);
     newOracle.maxDeviation = 200;
     newOracle.isStatic = true;
     newOracle.timelockMinutes = 60; // 1 hour
@@ -166,7 +166,7 @@ contract OracleRangeTest is Test {
   function test_acceptOracle_failsIfTimelocked() public {
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(200);
+    newOracle.staticValue = int24(200);
     newOracle.timelockMinutes = 60;
 
     vm.startPrank(owner);
@@ -190,7 +190,7 @@ contract OracleRangeTest is Test {
   function test_rejectOracle() public {
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(500);
+    newOracle.staticValue = int24(500);
     newOracle.proposedAt = uint40(block.timestamp);
 
     vm.prank(owner);
@@ -221,7 +221,7 @@ contract OracleRangeTest is Test {
   function test_oracleTimelock_edgeCase() public {
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(100);
+    newOracle.staticValue = int24(100);
     newOracle.timelockMinutes = 60;
 
     vm.startPrank(owner);
@@ -237,12 +237,12 @@ contract OracleRangeTest is Test {
   function test_multipleOracleProposals() public {
     OracleData memory oracle1;
     oracle1.isStatic = true;
-    oracle1.staticValue = Tick.wrap(100);
+    oracle1.staticValue = int24(100);
     oracle1.timelockMinutes = 60;
 
     OracleData memory oracle2;
     oracle2.isStatic = true;
-    oracle2.staticValue = Tick.wrap(200);
+    oracle2.staticValue = int24(200);
     oracle2.timelockMinutes = 60;
 
     vm.startPrank(owner);
@@ -255,8 +255,8 @@ contract OracleRangeTest is Test {
     oracleRange.acceptOracle();
     vm.stopPrank();
 
-    (,, Tick staticValue,,,) = oracleRange.oracle();
-    assertEq(Tick.unwrap(staticValue), 200);
+    (,, int24 staticValue,,,) = oracleRange.oracle();
+    assertEq(staticValue, 200);
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -268,9 +268,9 @@ contract OracleRangeTest is Test {
     assertEq(oracleRange.guardian(), guardian);
 
     // Check initial oracle values
-    (bool isStatic,, Tick staticValue, uint16 maxDev,,) = oracleRange.oracle();
+    (bool isStatic,, int24 staticValue, uint16 maxDev,,) = oracleRange.oracle();
     assertTrue(isStatic);
-    assertEq(Tick.unwrap(staticValue), 100);
+    assertEq(staticValue, 100);
     assertEq(maxDev, 100);
   }
 
@@ -280,7 +280,7 @@ contract OracleRangeTest is Test {
 
     OracleData memory initialOracle;
     initialOracle.isStatic = true;
-    initialOracle.staticValue = Tick.wrap(200);
+    initialOracle.staticValue = int24(200);
     initialOracle.maxDeviation = 150;
     initialOracle.timelockMinutes = 120;
     initialOracle.proposedAt = uint40(block.timestamp);
@@ -304,9 +304,9 @@ contract OracleRangeTest is Test {
     assertEq(newOracleRange.owner(), newOwner);
     assertEq(newOracleRange.guardian(), newGuardian);
 
-    (bool isStatic,, Tick staticValue, uint16 maxDev,,) = newOracleRange.oracle();
+    (bool isStatic,, int24 staticValue, uint16 maxDev,,) = newOracleRange.oracle();
     assertTrue(isStatic);
-    assertEq(Tick.unwrap(staticValue), 200);
+    assertEq(staticValue, 200);
     assertEq(maxDev, 150);
   }
 
@@ -316,7 +316,7 @@ contract OracleRangeTest is Test {
 
     OracleData memory initialOracle;
     initialOracle.isStatic = true;
-    initialOracle.staticValue = Tick.wrap(300);
+    initialOracle.staticValue = int24(300);
     initialOracle.maxDeviation = 200;
     initialOracle.timelockMinutes = 60;
     initialOracle.proposedAt = uint40(block.timestamp);
@@ -662,7 +662,7 @@ contract OracleRangeTest is Test {
     // Propose an oracle as owner
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(500);
+    newOracle.staticValue = int24(500);
     newOracle.timelockMinutes = 60;
 
     vm.prank(owner);
@@ -707,7 +707,7 @@ contract OracleRangeTest is Test {
     // After setting to zero address, no one should be able to reject oracles
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(500);
+    newOracle.staticValue = int24(500);
     newOracle.timelockMinutes = 60;
 
     vm.prank(owner);
@@ -748,7 +748,7 @@ contract OracleRangeTest is Test {
     // Verify only the final guardian can reject oracles
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(500);
+    newOracle.staticValue = int24(500);
     newOracle.timelockMinutes = 60;
 
     vm.prank(owner);
@@ -785,7 +785,7 @@ contract OracleRangeTest is Test {
     // Propose and accept a new static oracle
     OracleData memory newOracle;
     newOracle.isStatic = true;
-    newOracle.staticValue = Tick.wrap(500);
+    newOracle.staticValue = int24(500);
     newOracle.maxDeviation = 250;
     newOracle.timelockMinutes = 60;
 
@@ -915,7 +915,7 @@ contract OracleRangeTest is Test {
     // Transition back to static oracle
     OracleData memory newStaticOracle;
     newStaticOracle.isStatic = true;
-    newStaticOracle.staticValue = Tick.wrap(750);
+    newStaticOracle.staticValue = int24(750);
     newStaticOracle.maxDeviation = 150;
     newStaticOracle.timelockMinutes = 30;
 
@@ -935,7 +935,7 @@ contract OracleRangeTest is Test {
   function test_getCurrentTickInfo_zeroMaxDeviation() public {
     OracleData memory zeroDeviationOracle;
     zeroDeviationOracle.isStatic = true;
-    zeroDeviationOracle.staticValue = Tick.wrap(1200);
+    zeroDeviationOracle.staticValue = int24(1200);
     zeroDeviationOracle.maxDeviation = 0; // Zero deviation
     zeroDeviationOracle.timelockMinutes = 60;
 
@@ -954,7 +954,7 @@ contract OracleRangeTest is Test {
   function test_getCurrentTickInfo_maxDeviationBoundaries() public {
     OracleData memory maxDeviationOracle;
     maxDeviationOracle.isStatic = true;
-    maxDeviationOracle.staticValue = Tick.wrap(-500);
+    maxDeviationOracle.staticValue = int24(-500);
     maxDeviationOracle.maxDeviation = type(uint16).max; // Maximum possible deviation
     maxDeviationOracle.timelockMinutes = 60;
 

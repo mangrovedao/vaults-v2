@@ -15,6 +15,7 @@ import {MAX_TICK} from "@mgv/lib/core/Constants.sol";
 
 // External dependencies (solady)
 import {SafeTransferLib} from "lib/solady/src/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "lib/solady/src/utils/FixedPointMathLib.sol";
 
 // Internal dependencies
 import {OracleRange} from "./OracleRange.sol";
@@ -326,17 +327,24 @@ contract KandelManagement is OracleRange {
     bool withdrawProvisions,
     address recipient
   ) external onlyManager {
-    KANDEL.retractAndWithdraw(
-      from, to, baseAmount, quoteAmount, withdrawProvisions ? type(uint256).max : 0, payable(address(this))
-    );
-    if (baseAmount > 0 || quoteAmount > 0) {
-      if (state.inKandel) {
-        state.inKandel = false;
-        emit FundsExitedKandel();
+    unchecked {
+      KANDEL.retractAndWithdraw(
+        from,
+        to,
+        baseAmount,
+        quoteAmount,
+        FixedPointMathLib.ternary(withdrawProvisions, type(uint256).max, 0),
+        payable(address(this))
+      );
+      if (baseAmount > 0 || quoteAmount > 0) {
+        if (state.inKandel) {
+          state.inKandel = false;
+          emit FundsExitedKandel();
+        }
       }
-    }
-    if (withdrawProvisions) {
-      recipient.safeTransferAllETH();
+      if (withdrawProvisions) {
+        recipient.safeTransferAllETH();
+      }
     }
   }
 
@@ -436,9 +444,7 @@ contract KandelManagement is OracleRange {
     for (uint256 i = 0; i < offers.length; i++) {
       // Skip inactive offers (zero gives)
       if (offers[i].gives == 0) continue;
-      if (Tick.unwrap(offers[i].tick) < minTick) {
-        minTick = Tick.unwrap(offers[i].tick);
-      }
+      minTick = FixedPointMathLib.min(minTick, Tick.unwrap(offers[i].tick));
     }
     return Tick.wrap(minTick);
   }
@@ -479,20 +485,22 @@ contract KandelManagement is OracleRange {
     uint256 askGives,
     CoreKandel.Params memory parameters
   ) internal view returns (DirectWithBidsAndAsksDistribution.Distribution memory distribution) {
-    distribution = KANDEL.createDistribution(
-      from,
-      to,
-      baseQuoteTickIndex0,
-      _baseQuoteTickOffset,
-      firstAskIndex,
-      bidGives,
-      askGives,
-      parameters.pricePoints,
-      parameters.stepSize
-    );
-    OracleData memory _oracle = oracle;
-    if (!_oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids))) revert InvalidDistribution();
-    return distribution;
+    unchecked {
+      distribution = KANDEL.createDistribution(
+        from,
+        to,
+        baseQuoteTickIndex0,
+        _baseQuoteTickOffset,
+        firstAskIndex,
+        bidGives,
+        askGives,
+        parameters.pricePoints,
+        parameters.stepSize
+      );
+      OracleData memory _oracle = oracle;
+      if (!_oracle.accepts(_minTick(distribution.asks), _minTick(distribution.bids))) revert InvalidDistribution();
+      return distribution;
+    }
   }
 
   /**
@@ -501,11 +509,15 @@ contract KandelManagement is OracleRange {
    * @dev Fetches gas price, gas requirement, step size, and price points from Kandel
    */
   function _params() private view returns (CoreKandel.Params memory params) {
-    (uint32 gasprice, uint24 gasreq, uint32 stepSize, uint32 pricePoints) = KANDEL.params();
-    params.gasprice = gasprice;
-    params.gasreq = gasreq;
-    params.stepSize = stepSize;
-    params.pricePoints = pricePoints;
+    address target = address(KANDEL);
+    /// @solidity memory-safe-assembly
+    assembly {
+      mstore(params, 0xcff0ab96) // params()
+      if iszero(staticcall(gas(), target, add(params, 0x1c), 0x04, params, 0x80)) {
+        returndatacopy(params, 0x00, returndatasize())
+        revert(params, returndatasize())
+      }
+    }
   }
 
   /**

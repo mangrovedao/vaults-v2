@@ -110,7 +110,7 @@ contract OracleLibTest is Test {
     return OracleData({
       isStatic: true,
       oracle: IOracle(address(0)),
-      staticValue: staticTick,
+      staticValue: int24(Tick.unwrap(staticTick)),
       maxDeviation: maxDev,
       proposedAt: 0,
       timelockMinutes: 60
@@ -121,7 +121,7 @@ contract OracleLibTest is Test {
     return OracleData({
       isStatic: false,
       oracle: oracle_,
-      staticValue: ZERO_TICK,
+      staticValue: int24(0),
       maxDeviation: maxDev,
       proposedAt: 0,
       timelockMinutes: 60
@@ -348,10 +348,10 @@ contract OracleLibTest is Test {
     OracleData memory oracle = createStaticOracle(ZERO_TICK, 100);
     assertTrue(testContract.isValid(oracle));
 
-    oracle.staticValue = MAX_TICK;
+    oracle.staticValue = int24(Tick.unwrap(MAX_TICK));
     assertTrue(testContract.isValid(oracle));
 
-    oracle.staticValue = MIN_TICK;
+    oracle.staticValue = int24(Tick.unwrap(MIN_TICK));
     assertTrue(testContract.isValid(oracle));
   }
 
@@ -359,7 +359,7 @@ contract OracleLibTest is Test {
     OracleData memory oracle = createStaticOracle(Tick.wrap(887273), 100); // Out of range
     assertFalse(testContract.isValid(oracle));
 
-    oracle.staticValue = Tick.wrap(-887273); // Out of range
+    oracle.staticValue = int24(-887273); // Out of range
     assertFalse(testContract.isValid(oracle));
   }
 

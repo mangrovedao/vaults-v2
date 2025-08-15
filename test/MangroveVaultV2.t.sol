@@ -40,7 +40,7 @@ contract MangroveVaultV2Test is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 1000; // Wide range for testing
     oracle.timelockMinutes = 60; // 1 hour
-    oracle.staticValue = TickLib.tickFromVolumes(2000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(2000e6, 1 ether)));
 
     // Setup vault initialization parameters
     MangroveVaultV2.VaultInitParams memory params = MangroveVaultV2.VaultInitParams({
@@ -155,7 +155,7 @@ contract MangroveVaultV2Test is MangroveTest {
     // Test with amounts that would create a tick outside oracle range
     OracleData memory restrictiveOracle;
     restrictiveOracle.isStatic = true;
-    restrictiveOracle.staticValue = Tick.wrap(0);
+    restrictiveOracle.staticValue = int24(0);
     restrictiveOracle.maxDeviation = 10; // Very restrictive
     restrictiveOracle.timelockMinutes = 60;
 
@@ -984,7 +984,7 @@ contract MangroveVaultV2Test is MangroveTest {
 
     OracleData memory oracle;
     oracle.isStatic = true;
-    oracle.staticValue = Tick.wrap(tick);
+    oracle.staticValue = int24(tick);
     oracle.maxDeviation = uint16(maxDeviation);
     oracle.timelockMinutes = 60;
 
@@ -1025,7 +1025,7 @@ contract MangroveVaultV2Test is MangroveTest {
 
     OracleData memory oracle;
     oracle.isStatic = true;
-    oracle.staticValue = Tick.wrap(tick);
+    oracle.staticValue = int24(tick);
     oracle.maxDeviation = 1000;
     oracle.timelockMinutes = 60;
 
