@@ -250,8 +250,8 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     } else {
       sharesOut =
         FixedPointMathLib.min(baseAmountMax.mulDiv(supply, baseBalance), quoteAmountMax.mulDiv(supply, quoteBalance));
-      baseIn = sharesOut.mulDiv(baseBalance, supply);
-      quoteIn = sharesOut.mulDiv(quoteBalance, supply);
+      baseIn = sharesOut.mulDivUp(baseBalance, supply);
+      quoteIn = sharesOut.mulDivUp(quoteBalance, supply);
     }
   }
 
@@ -408,22 +408,24 @@ contract MangroveVaultV2 is KandelManagementRebalancing, ERC20 {
     internal
     returns (uint256 sentBase, uint256 sentQuote)
   {
-    uint256 localBaseBalance = BASE.balanceOf(address(this));
-    uint256 localQuoteBalance = QUOTE.balanceOf(address(this));
+    unchecked {
+      uint256 localBaseBalance = BASE.balanceOf(address(this));
+      uint256 localQuoteBalance = QUOTE.balanceOf(address(this));
 
-    uint256 baseToWithdraw = baseAmount > localBaseBalance ? baseAmount - localBaseBalance : 0;
-    uint256 quoteToWithdraw = quoteAmount > localQuoteBalance ? quoteAmount - localQuoteBalance : 0;
+      uint256 baseToWithdraw = baseAmount > localBaseBalance ? baseAmount - localBaseBalance : 0;
+      uint256 quoteToWithdraw = quoteAmount > localQuoteBalance ? quoteAmount - localQuoteBalance : 0;
 
-    if (baseToWithdraw > 0 || quoteToWithdraw > 0) {
-      KANDEL.withdrawFunds(baseToWithdraw, quoteToWithdraw, address(this));
-      localBaseBalance = BASE.balanceOf(address(this));
-      localQuoteBalance = QUOTE.balanceOf(address(this));
+      if (baseToWithdraw > 0 || quoteToWithdraw > 0) {
+        KANDEL.withdrawFunds(baseToWithdraw, quoteToWithdraw, address(this));
+        localBaseBalance = BASE.balanceOf(address(this));
+        localQuoteBalance = QUOTE.balanceOf(address(this));
+      }
+
+      sentBase = FixedPointMathLib.min(baseAmount, localBaseBalance);
+      sentQuote = FixedPointMathLib.min(quoteAmount, localQuoteBalance);
+      BASE.safeTransfer(to, sentBase);
+      QUOTE.safeTransfer(to, sentQuote);
     }
-
-    sentBase = FixedPointMathLib.min(baseAmount, localBaseBalance);
-    sentQuote = FixedPointMathLib.min(quoteAmount, localQuoteBalance);
-    BASE.safeTransfer(to, sentBase);
-    QUOTE.safeTransfer(to, sentQuote);
   }
 
   /**

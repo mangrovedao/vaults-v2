@@ -42,7 +42,7 @@ contract KandelManagementTest is MangroveTest {
 
   function test_invalidDistribution() public {
     OracleData memory oracle;
-    oracle.staticValue = Tick.wrap(100);
+    oracle.staticValue = int24(100);
     oracle.maxDeviation = 50;
     oracle.isStatic = true;
     vm.startPrank(owner);
@@ -62,7 +62,7 @@ contract KandelManagementTest is MangroveTest {
 
   function test_validDistributionWithinDeviation() public {
     OracleData memory oracle;
-    oracle.staticValue = Tick.wrap(100);
+    oracle.staticValue = int24(100);
     oracle.maxDeviation = 100;
     oracle.isStatic = true;
     vm.startPrank(owner);
@@ -549,14 +549,23 @@ contract KandelManagementTest is MangroveTest {
     CoreKandel.Params memory params;
     params.pricePoints = 10;
     params.stepSize = 1;
+    params.gasprice = 12;
 
     vm.deal(address(manager), 0.01 ether);
     vm.startPrank(manager);
     management.populateFromOffset{value: 0.01 ether}(0, 10, Tick.wrap(0), 1, 5, 100e6, 1 ether, params);
 
+    (uint32 gasprice, uint24 gasreq, uint32 stepSize, uint32 pricePoints) = management.KANDEL().params();
+
     // Now test chunk populate
     management.populateChunkFromOffset(0, 5, Tick.wrap(10), 2, 200e6, 2 ether);
     vm.stopPrank();
+
+    (uint32 gasprice2, uint24 gasreq2, uint32 stepSize2, uint32 pricePoints2) = management.KANDEL().params();
+    assertEq(gasprice, gasprice2, "gasprice should be the same");
+    assertEq(gasreq, gasreq2, "gasreq should be the same");
+    assertEq(stepSize, stepSize2, "stepSize should be the same");
+    assertEq(pricePoints, pricePoints2, "pricePoints should be the same");
   }
 
   function test_populateChunkFromOffset_onlyManager() public {
@@ -568,7 +577,7 @@ contract KandelManagementTest is MangroveTest {
   function test_populateChunkFromOffset_invalidDistribution() public {
     // Set restrictive oracle
     OracleData memory restrictiveOracle;
-    restrictiveOracle.staticValue = Tick.wrap(100);
+    restrictiveOracle.staticValue = int24(100);
     restrictiveOracle.maxDeviation = 10;
     restrictiveOracle.isStatic = true;
     restrictiveOracle.timelockMinutes = 60;
@@ -605,7 +614,7 @@ contract KandelManagementTest is MangroveTest {
 
     OracleData memory testOracle;
     testOracle.isStatic = true;
-    testOracle.staticValue = Tick.wrap(200);
+    testOracle.staticValue = int24(200);
     testOracle.maxDeviation = 150;
     testOracle.timelockMinutes = 120;
 
@@ -641,7 +650,7 @@ contract KandelManagementTest is MangroveTest {
 
     OracleData memory testOracle;
     testOracle.isStatic = true;
-    testOracle.staticValue = Tick.wrap(300);
+    testOracle.staticValue = int24(300);
     testOracle.maxDeviation = 200;
     testOracle.timelockMinutes = 60;
 
@@ -681,7 +690,7 @@ contract KandelManagementTest is MangroveTest {
 
     OracleData memory testOracle;
     testOracle.isStatic = true;
-    testOracle.staticValue = Tick.wrap(500);
+    testOracle.staticValue = int24(500);
     testOracle.maxDeviation = 100;
     testOracle.timelockMinutes = 30;
 

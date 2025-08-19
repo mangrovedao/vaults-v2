@@ -733,7 +733,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -788,7 +788,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -916,7 +916,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -980,7 +980,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     // Setup oracle with restrictive deviation
     OracleData memory restrictiveOracle;
     restrictiveOracle.isStatic = true;
-    restrictiveOracle.staticValue = Tick.wrap(0);
+    restrictiveOracle.staticValue = int24(0);
     restrictiveOracle.maxDeviation = 10; // Very small deviation
     restrictiveOracle.timelockMinutes = 60;
 
@@ -1027,7 +1027,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -1092,7 +1092,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -1165,7 +1165,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
@@ -1213,7 +1213,7 @@ contract KandelManagementRebalancingTest is MangroveTest {
     oracle.isStatic = true;
     oracle.maxDeviation = 100;
     oracle.timelockMinutes = 60;
-    oracle.staticValue = TickLib.tickFromVolumes(1000e6, 1 ether);
+    oracle.staticValue = int24(Tick.unwrap(TickLib.tickFromVolumes(1000e6, 1 ether)));
 
     vm.prank(owner);
     management.proposeOracle(oracle);
